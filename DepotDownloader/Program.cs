@@ -161,16 +161,16 @@ namespace DepotDownloader
 
             #endregion
 
-            var appId = GetParameter(args, "-app", ContentDownloader.INVALID_APP_ID);
-            if (appId == ContentDownloader.INVALID_APP_ID)
+            var appId = GetParameter(args, "-app", ContentDownloader.InvalidAppId);
+            if (appId == ContentDownloader.InvalidAppId)
             {
                 Console.WriteLine("Error: -app not specified!");
                 return 1;
             }
 
-            var pubFile = GetParameter(args, "-pubfile", ContentDownloader.INVALID_MANIFEST_ID);
-            var ugcId = GetParameter(args, "-ugc", ContentDownloader.INVALID_MANIFEST_ID);
-            if (pubFile != ContentDownloader.INVALID_MANIFEST_ID)
+            var pubFile = GetParameter(args, "-pubfile", ContentDownloader.InvalidManifestId);
+            var ugcId = GetParameter(args, "-ugc", ContentDownloader.InvalidManifestId);
+            if (pubFile != ContentDownloader.InvalidManifestId)
             {
                 #region Pubfile Downloading
 
@@ -207,7 +207,7 @@ namespace DepotDownloader
 
                 #endregion
             }
-            else if (ugcId != ContentDownloader.INVALID_MANIFEST_ID)
+            else if (ugcId != ContentDownloader.InvalidManifestId)
             {
                 #region UGC Downloading
 
@@ -217,7 +217,7 @@ namespace DepotDownloader
                 {
                     try
                     {
-                        await ContentDownloader.DownloadUGCAsync(appId, ugcId).ConfigureAwait(false);
+                        await ContentDownloader.DownloadUgcAsync(appId, ugcId).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (
                         ex is ContentDownloaderException
@@ -248,7 +248,7 @@ namespace DepotDownloader
             {
                 #region App downloading
 
-                var branch = GetParameter<string>(args, "-branch") ?? GetParameter<string>(args, "-beta") ?? ContentDownloader.DEFAULT_BRANCH;
+                var branch = GetParameter<string>(args, "-branch") ?? GetParameter<string>(args, "-beta") ?? ContentDownloader.DefaultBranch;
                 ContentDownloader.Config.BetaPassword = GetParameter<string>(args, "-branchpassword") ?? GetParameter<string>(args, "-betapassword");
 
                 if (!string.IsNullOrEmpty(ContentDownloader.Config.BetaPassword) && string.IsNullOrEmpty(branch))
@@ -306,7 +306,7 @@ namespace DepotDownloader
                 }
                 else
                 {
-                    depotManifestIds.AddRange(depotIdList.Select(depotId => (depotId, ContentDownloader.INVALID_MANIFEST_ID)));
+                    depotManifestIds.AddRange(depotIdList.Select(depotId => (depotId, INVALID_MANIFEST_ID: ContentDownloader.InvalidManifestId)));
                 }
 
                 PrintUnconsumedArgs(args);
@@ -501,7 +501,7 @@ namespace DepotDownloader
             Console.WriteLine("  -app <#>                 - the AppID to download.");
             Console.WriteLine("  -depot <#>               - the DepotID to download.");
             Console.WriteLine("  -manifest <id>           - manifest id of content to download (requires -depot, default: current for branch).");
-            Console.WriteLine($"  -branch <branchname>    - download from specified branch if available (default: {ContentDownloader.DEFAULT_BRANCH}).");
+            Console.WriteLine($"  -branch <branchname>    - download from specified branch if available (default: {ContentDownloader.DefaultBranch}).");
             Console.WriteLine("  -branchpassword <pass>   - branch password if applicable.");
             Console.WriteLine("  -all-platforms           - downloads all platform-specific depots when -app is used.");
             Console.WriteLine("  -all-archs               - download all architecture-specific depots when -app is used.");
