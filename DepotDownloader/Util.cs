@@ -74,7 +74,6 @@ internal static class Util
         if (TryDisplayQrCodeAsImage(qrCodeData))
         {
             Console.WriteLine("A QR code has been displayed. Use the Steam Mobile App to sign in.");
-            Console.WriteLine("Press Enter to continue after scanning, or close the image window...");
             return;
         }
 
