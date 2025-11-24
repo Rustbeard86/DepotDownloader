@@ -675,10 +675,10 @@ namespace DepotDownloader
             this.seq++;
             IsLoggedOn = true;
 
-            if (ContentDownloader.Config.CellID == 0)
+            if (ContentDownloader.Config.CellId == 0)
             {
                 Console.WriteLine("Using Steam3 suggested CellID: " + loggedOn.CellID);
-                ContentDownloader.Config.CellID = (int)loggedOn.CellID;
+                ContentDownloader.Config.CellId = (int)loggedOn.CellID;
             }
         }
 

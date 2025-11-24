@@ -94,7 +94,7 @@ namespace DepotDownloader
                 cellId = 0;
             }
 
-            ContentDownloader.Config.CellID = cellId;
+            ContentDownloader.Config.CellId = cellId;
 
             var fileList = GetParameter<string>(args, "-filelist");
 
@@ -157,7 +157,7 @@ namespace DepotDownloader
             }
 
             ContentDownloader.Config.MaxDownloads = GetParameter(args, "-max-downloads", 8);
-            ContentDownloader.Config.LoginID = HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null;
+            ContentDownloader.Config.LoginId = HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null;
 
             #endregion
 

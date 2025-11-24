@@ -323,7 +323,7 @@ namespace DepotDownloader
                     Password = loginToken == null ? password : null,
                     ShouldRememberPassword = Config.RememberPassword,
                     AccessToken = loginToken,
-                    LoginID = Config.LoginID ?? 0x534B32, // "SK2"
+                    LoginID = Config.LoginId ?? 0x534B32, // "SK2"
                 }
             );
 
