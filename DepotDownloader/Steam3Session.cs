@@ -598,10 +598,43 @@ internal class Steam3Session
             else if (isAccessToken)
             {
                 if (_logonDetails.Username != null)
+                {
+                    // Clear the invalid token from stored settings
                     AccountSettingsStore.Instance.LoginTokens.Remove(_logonDetails.Username);
-                AccountSettingsStore.Save();
+                    AccountSettingsStore.Save();
 
-                // TODO: Handle gracefully by falling back to password prompt?
+                    Console.WriteLine($"Access token was rejected ({loggedOn.Result}).");
+                    Console.WriteLine("Your saved credentials have expired. Please re-enter your password.");
+                    Console.WriteLine();
+
+                    // Clear the access token to force password authentication
+                    _logonDetails.AccessToken = null;
+
+                    // Prompt for password
+                    string password;
+                    do
+                    {
+                        Console.Write($"Enter account password for \"{_logonDetails.Username}\": ");
+                        if (Console.IsInputRedirected)
+                        {
+                            password = Console.ReadLine();
+                        }
+                        else
+                        {
+                            // Avoid console echoing of password
+                            password = Util.ReadPassword();
+                            Console.WriteLine();
+                        }
+                    } while (string.IsNullOrEmpty(password));
+
+                    _logonDetails.Password = password;
+
+                    Console.Write("Retrying Steam3 connection...");
+                    Connect();
+                    return;
+                }
+
+                // No username available, can't prompt for password
                 Console.WriteLine($"Access token was rejected ({loggedOn.Result}).");
                 Abort(false);
                 return;

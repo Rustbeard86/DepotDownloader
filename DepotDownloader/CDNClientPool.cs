@@ -88,7 +88,10 @@ internal class CdnClientPool(Steam3Session steamSession, uint appId)
         }
     }
 
+    // Intentionally instance method to maintain API consistency with GetConnection()
+#pragma warning disable CA1822
     public void ReturnConnection(Server server)
+#pragma warning restore CA1822
     {
         if (server == null || string.IsNullOrEmpty(server.Host)) return;
 
