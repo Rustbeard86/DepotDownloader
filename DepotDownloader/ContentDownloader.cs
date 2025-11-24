@@ -30,7 +30,7 @@ namespace DepotDownloader
         public static DownloadConfig Config = new();
 
         private static Steam3Session steam3;
-        private static CDNClientPool cdnPool;
+        private static CdnClientPool cdnPool;
 
         private const string DEFAULT_DOWNLOAD_DIR = "depots";
         private const string CONFIG_DIR = ".DepotDownloader";
@@ -453,7 +453,7 @@ namespace DepotDownloader
 
         public static async Task DownloadAppAsync(uint appId, List<(uint depotId, ulong manifestId)> depotManifestIds, string branch, string os, string arch, string language, bool lv, bool isUgc)
         {
-            cdnPool = new CDNClientPool(steam3, appId);
+            cdnPool = new CdnClientPool(steam3, appId);
 
             // Load our configuration data containing the depots currently installed
             var configPath = Config.InstallDirectory;
@@ -837,7 +837,7 @@ namespace DepotDownloader
                                 depot.ManifestId,
                                 connection,
                                 cdnPool.ProxyServer != null ? cdnPool.ProxyServer : "no proxy");
-                            newManifest = await cdnPool.CDNClient.DownloadManifestAsync(
+                            newManifest = await cdnPool.CdnClient.DownloadManifestAsync(
                                 depot.DepotId,
                                 depot.ManifestId,
                                 manifestRequestCode,
@@ -1262,7 +1262,7 @@ namespace DepotDownloader
                         }
 
                         DebugLog.WriteLine("ContentDownloader", "Downloading chunk {0} from {1} with {2}", chunkID, connection, cdnPool.ProxyServer != null ? cdnPool.ProxyServer : "no proxy");
-                        written = await cdnPool.CDNClient.DownloadDepotChunkAsync(
+                        written = await cdnPool.CdnClient.DownloadDepotChunkAsync(
                             depot.DepotId,
                             chunk,
                             connection,
