@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using QRCoder;
 using SteamKit2;
 
 namespace DepotDownloader;
@@ -13,24 +14,17 @@ internal static class Util
 {
     public static string GetSteamOs()
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return "windows";
-        }
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return "windows";
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-        {
-            return "macos";
-        }
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return "macos";
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-        {
-            return "linux";
-        }
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) return "linux";
 
-        return RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD) ?
+        return RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD)
+            ?
             // Return linux as freebsd steam client doesn't exist yet
-            "linux" : "unknown";
+            "linux"
+            : "unknown";
     }
 
     public static string GetSteamArch()
@@ -60,16 +54,26 @@ internal static class Util
 
             /* Printable ASCII characters only */
             var c = keyInfo.KeyChar;
-            if (c is < ' ' or > '~')
-            {
-                continue;
-            }
+            if (c is < ' ' or > '~') continue;
 
             password.Append(c);
             Console.Write('*');
         } while (keyInfo.Key != ConsoleKey.Enter);
 
         return password.ToString();
+    }
+
+    public static void DisplayQrCode(string challengeUrl)
+    {
+        // Encode the link as a QR code
+        using var qrGenerator = new QRCodeGenerator();
+        var qrCodeData = qrGenerator.CreateQrCode(challengeUrl, QRCodeGenerator.ECCLevel.L);
+        using var qrCode = new AsciiQRCode(qrCodeData);
+        var qrCodeAsAsciiArt = qrCode.GetLineByLineGraphic(1, drawQuietZones: true);
+
+        Console.WriteLine("Use the Steam Mobile App to sign in with this QR code:");
+
+        foreach (var line in qrCodeAsAsciiArt) Console.WriteLine(line);
     }
 
     // Validate a file against Steam3 Chunk data
@@ -83,10 +87,7 @@ internal static class Util
             fs.Seek((long)data.Offset, SeekOrigin.Begin);
 
             var adler = AdlerHash(fs, (int)data.UncompressedLength);
-            if (!adler.SequenceEqual(BitConverter.GetBytes(data.Checksum)))
-            {
-                neededChunks.Add(data);
-            }
+            if (!adler.SequenceEqual(BitConverter.GetBytes(data.Checksum))) neededChunks.Add(data);
         }
 
         return neededChunks;
@@ -137,23 +138,16 @@ internal static class Util
             var currentChecksum = FileShaHash(filename);
 
             if (expectedChecksum != null && expectedChecksum.SequenceEqual(currentChecksum))
-            {
                 return DepotManifest.LoadFromFile(filename);
-            }
 
             if (badHashWarning)
-            {
                 Console.WriteLine("Manifest {0} on disk did not match the expected checksum.", manifestId);
-            }
         }
 
         // Try converting legacy manifest format.
         filename = Path.Combine(directory, $"{depotId}_{manifestId}.bin");
 
-        if (!File.Exists(filename))
-        {
-            return null;
-        }
+        if (!File.Exists(filename)) return null;
 
         {
             byte[] expectedChecksum;
@@ -174,15 +168,10 @@ internal static class Util
                 oldManifest = null;
 
                 if (badHashWarning)
-                {
                     Console.WriteLine("Manifest {0} on disk did not match the expected checksum.", manifestId);
-                }
             }
 
-            if (oldManifest != null)
-            {
-                return oldManifest.ConvertToSteamManifest(depotId);
-            }
+            if (oldManifest != null) return oldManifest.ConvertToSteamManifest(depotId);
         }
 
         return null;
@@ -207,18 +196,12 @@ internal static class Util
     // TODO: Unused method
     public static byte[] DecodeHexString(string hex)
     {
-        if (hex == null)
-        {
-            return null;
-        }
+        if (hex == null) return null;
 
         var chars = hex.Length;
         var bytes = new byte[chars / 2];
 
-        for (var i = 0; i < chars; i += 2)
-        {
-            bytes[i / 2] = Convert.ToByte(hex.Substring(i, 2), 16);
-        }
+        for (var i = 0; i < chars; i += 2) bytes[i / 2] = Convert.ToByte(hex.Substring(i, 2), 16);
 
         return bytes;
     }

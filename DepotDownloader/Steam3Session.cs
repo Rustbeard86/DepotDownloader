@@ -5,7 +5,6 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using QRCoder;
 using SteamKit2;
 using SteamKit2.Authentication;
 using SteamKit2.CDN;
@@ -17,28 +16,31 @@ internal class Steam3Session
 {
     public delegate bool WaitCondition();
 
+    // Cancellation
     private readonly CancellationTokenSource _abortedToken = new();
 
+    // Authentication
     private readonly bool _authenticatedUser;
 
+    // SteamKit2 Components
     private readonly CallbackManager _callbacks;
-
-    // input
     private readonly SteamUser.LogOnDetails _logonDetails;
     private readonly SteamApps _steamApps;
     private readonly SteamCloud _steamCloud;
-
     private readonly Lock _steamLock = new();
     private readonly PublishedFile _steamPublishedFile;
     private AuthSession _authSession;
+
+    // Connection State
     private bool _bAborted;
     private bool _bConnecting;
     private bool _bDidDisconnect;
     private bool _bExpectingDisconnectRemote;
     private bool _bIsConnectionRecovery;
     private int _connectionBackoff;
-    private int _seq; // more hack fixes
+    private int _seq;
 
+    // Public SteamKit2 Handlers
     public SteamClient SteamClient;
     public SteamContent SteamContent;
     public SteamUser SteamUser;
@@ -50,7 +52,7 @@ internal class Steam3Session
 
         var clientConfiguration = SteamConfiguration.Create(config =>
             config
-                .WithHttpClientFactory(static purpose => HttpClientFactory.CreateHttpClient())
+                .WithHttpClientFactory(static _ => HttpClientFactory.CreateHttpClient())
         );
 
         SteamClient = new SteamClient(clientConfiguration);
@@ -59,7 +61,12 @@ internal class Steam3Session
         _steamApps = SteamClient.GetHandler<SteamApps>();
         _steamCloud = SteamClient.GetHandler<SteamCloud>();
         var steamUnifiedMessages = SteamClient.GetHandler<SteamUnifiedMessages>();
-        _steamPublishedFile = steamUnifiedMessages.CreateService<PublishedFile>();
+
+        if (steamUnifiedMessages != null)
+            _steamPublishedFile = steamUnifiedMessages.CreateService<PublishedFile>();
+        else
+            throw new InvalidOperationException("Failed to get SteamUnifiedMessages handler from SteamClient");
+
         SteamContent = SteamClient.GetHandler<SteamContent>();
 
         _callbacks = new CallbackManager(SteamClient);
@@ -152,18 +159,19 @@ internal class Steam3Session
 
         var appInfoMultiple = await _steamApps.PICSGetProductInfo([request], []);
 
-        foreach (var appInfo in appInfoMultiple.Results)
-        {
-            foreach (var appValue in appInfo.Apps)
+        if (appInfoMultiple.Results != null)
+            foreach (var appInfo in appInfoMultiple.Results)
             {
-                var app = appValue.Value;
+                foreach (var appValue in appInfo.Apps)
+                {
+                    var app = appValue.Value;
 
-                Console.WriteLine("Got AppInfo for {0}", app.ID);
-                AppInfo[app.ID] = app;
+                    Console.WriteLine("Got AppInfo for {0}", app.ID);
+                    AppInfo[app.ID] = app;
+                }
+
+                foreach (var app in appInfo.UnknownApps) AppInfo[app] = null;
             }
-
-            foreach (var app in appInfo.UnknownApps) AppInfo[app] = null;
-        }
     }
 
     public async Task RequestPackageInfo(IEnumerable<uint> packageIds)
@@ -187,16 +195,17 @@ internal class Steam3Session
 
         var packageInfoMultiple = await _steamApps.PICSGetProductInfo([], packageRequests);
 
-        foreach (var packageInfo in packageInfoMultiple.Results)
-        {
-            foreach (var packageValue in packageInfo.Packages)
+        if (packageInfoMultiple.Results != null)
+            foreach (var packageInfo in packageInfoMultiple.Results)
             {
-                var package = packageValue.Value;
-                PackageInfo[package.ID] = package;
-            }
+                foreach (var packageValue in packageInfo.Packages)
+                {
+                    var package = packageValue.Value;
+                    PackageInfo[package.ID] = package;
+                }
 
-            foreach (var package in packageInfo.UnknownPackages) PackageInfo[package] = null;
-        }
+                foreach (var package in packageInfo.UnknownPackages) PackageInfo[package] = null;
+            }
     }
 
     public async Task<bool> RequestFreeAppLicense(uint appId)
@@ -263,14 +272,17 @@ internal class Steam3Session
 
         DebugLog.WriteLine(nameof(Steam3Session), $"Requesting CDN auth token for {server.Host}");
 
-        var cdnAuth = await SteamContent.GetCDNAuthToken(appid, depotid, server.Host);
+        if (server.Host != null)
+        {
+            var cdnAuth = await SteamContent.GetCDNAuthToken(appid, depotid, server.Host);
 
-        Console.WriteLine(
-            $"Got CDN auth token for {server.Host} result: {cdnAuth.Result} (expires {cdnAuth.Expiration})");
+            Console.WriteLine(
+                $"Got CDN auth token for {server.Host} result: {cdnAuth.Result} (expires {cdnAuth.Expiration})");
 
-        if (cdnAuth.Result != EResult.OK) return;
+            if (cdnAuth.Result != EResult.OK) return;
 
-        completion.TrySetResult(cdnAuth);
+            completion.TrySetResult(cdnAuth);
+        }
     }
 
     public async Task CheckAppBetaPassword(uint appid, string password)
@@ -372,81 +384,129 @@ internal class Steam3Session
         SteamClient.Disconnect();
     }
 
-    private async void ConnectedCallback(SteamClient.ConnectedCallback connected)
+    private void ConnectedCallback(SteamClient.ConnectedCallback connected)
     {
-        Console.WriteLine(" Done!");
-        _bConnecting = false;
+        // Fire and forget - exceptions are handled within HandleConnectedAsync
+        _ = HandleConnectedAsync();
+    }
 
-        // Update our tracking so that we don't time out, even if we need to reconnect multiple times,
-        // e.g. if the authentication phase takes a while and therefore multiple connections.
-        _connectionBackoff = 0;
-
-        if (!_authenticatedUser)
+    private async Task HandleConnectedAsync()
+    {
+        try
         {
-            Console.Write("Logging anonymously into Steam3...");
-            SteamUser.LogOnAnonymous();
-        }
-        else
-        {
-            if (_logonDetails.Username != null)
-                Console.WriteLine("Logging '{0}' into Steam3...", _logonDetails.Username);
+            Console.WriteLine(" Done!");
+            _bConnecting = false;
 
-            if (_authSession is null)
+            // Update our tracking so that we don't time out, even if we need to reconnect multiple times,
+            // e.g. if the authentication phase takes a while and therefore multiple connections.
+            _connectionBackoff = 0;
+
+            if (!_authenticatedUser)
             {
-                if (_logonDetails.Username != null && _logonDetails.Password != null &&
-                    _logonDetails.AccessToken is null)
+                Console.Write("Logging anonymously into Steam3...");
+                SteamUser.LogOnAnonymous();
+            }
+            else
+            {
+                if (_logonDetails.Username != null)
+                    Console.WriteLine("Logging '{0}' into Steam3...", _logonDetails.Username);
+
+                if (_authSession is null)
                 {
-                    try
+                    if (_logonDetails.Username != null && _logonDetails.Password != null &&
+                        _logonDetails.AccessToken is null)
                     {
-                        _ = AccountSettingsStore.Instance.GuardData.TryGetValue(_logonDetails.Username,
-                            out var guarddata);
-                        _authSession = await SteamClient.Authentication.BeginAuthSessionViaCredentialsAsync(
-                            new AuthSessionDetails
+                        try
+                        {
+                            _ = AccountSettingsStore.Instance.GuardData.TryGetValue(_logonDetails.Username,
+                                out var guarddata);
+                            _authSession = await SteamClient.Authentication.BeginAuthSessionViaCredentialsAsync(
+                                new AuthSessionDetails
+                                {
+                                    DeviceFriendlyName = nameof(DepotDownloader),
+                                    Username = _logonDetails.Username,
+                                    Password = _logonDetails.Password,
+                                    IsPersistentSession = ContentDownloader.Config.RememberPassword,
+                                    GuardData = guarddata,
+                                    Authenticator = new ConsoleAuthenticator()
+                                });
+                        }
+                        catch (TaskCanceledException)
+                        {
+                            return;
+                        }
+                        catch (Exception ex)
+                        {
+                            await Console.Error.WriteLineAsync("Failed to authenticate with Steam: " + ex.Message);
+                            Abort(false);
+                            return;
+                        }
+                    }
+                    else if (_logonDetails.AccessToken is null && ContentDownloader.Config.UseQrCode)
+                    {
+                        Console.WriteLine("Logging in with QR code...");
+
+                        try
+                        {
+                            var session = await SteamClient.Authentication.BeginAuthSessionViaQRAsync(
+                                new AuthSessionDetails
+                                {
+                                    DeviceFriendlyName = nameof(DepotDownloader),
+                                    IsPersistentSession = ContentDownloader.Config.RememberPassword
+                                });
+
+                            _authSession = session;
+
+                            // Steam will periodically refresh the challenge url, so we need a new QR code.
+                            session.ChallengeURLChanged = () =>
                             {
-                                DeviceFriendlyName = nameof(DepotDownloader),
-                                Username = _logonDetails.Username,
-                                Password = _logonDetails.Password,
-                                IsPersistentSession = ContentDownloader.Config.RememberPassword,
-                                GuardData = guarddata,
-                                Authenticator = new ConsoleAuthenticator()
-                            });
-                    }
-                    catch (TaskCanceledException)
-                    {
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine("Failed to authenticate with Steam: " + ex.Message);
-                        Abort(false);
-                        return;
+                                Console.WriteLine();
+                                Console.WriteLine("The QR code has changed:");
+
+                                Util.DisplayQrCode(session.ChallengeURL);
+                            };
+
+                            // Draw initial QR code immediately
+                            Util.DisplayQrCode(session.ChallengeURL);
+                        }
+                        catch (TaskCanceledException)
+                        {
+                            return;
+                        }
+                        catch (Exception ex)
+                        {
+                            await Console.Error.WriteLineAsync("Failed to authenticate with Steam: " + ex.Message);
+                            Abort(false);
+                            return;
+                        }
                     }
                 }
-                else if (_logonDetails.AccessToken is null && ContentDownloader.Config.UseQrCode)
-                {
-                    Console.WriteLine("Logging in with QR code...");
 
+                if (_authSession != null)
+                {
                     try
                     {
-                        var session = await SteamClient.Authentication.BeginAuthSessionViaQRAsync(new AuthSessionDetails
+                        var result = await _authSession.PollingWaitForResultAsync();
+
+                        _logonDetails.Username = result.AccountName;
+                        _logonDetails.Password = null;
+                        _logonDetails.AccessToken = result.RefreshToken;
+
+                        if (result.NewGuardData != null)
                         {
-                            DeviceFriendlyName = nameof(DepotDownloader),
-                            IsPersistentSession = ContentDownloader.Config.RememberPassword
-                        });
+                            AccountSettingsStore.Instance.GuardData[result.AccountName] = result.NewGuardData;
 
-                        _authSession = session;
-
-                        // Steam will periodically refresh the challenge url, so we need a new QR code.
-                        session.ChallengeURLChanged = () =>
+                            if (ContentDownloader.Config.UseQrCode)
+                                Console.WriteLine(
+                                    $"Success! Next time you can login with -username {result.AccountName} -remember-password instead of -qr.");
+                        }
+                        else
                         {
-                            Console.WriteLine();
-                            Console.WriteLine("The QR code has changed:");
+                            AccountSettingsStore.Instance.GuardData.Remove(result.AccountName);
+                        }
 
-                            DisplayQrCode(session.ChallengeURL);
-                        };
-
-                        // Draw initial QR code immediately
-                        DisplayQrCode(session.ChallengeURL);
+                        AccountSettingsStore.Instance.LoginTokens[result.AccountName] = result.RefreshToken;
+                        AccountSettingsStore.Save();
                     }
                     catch (TaskCanceledException)
                     {
@@ -454,54 +514,22 @@ internal class Steam3Session
                     }
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine("Failed to authenticate with Steam: " + ex.Message);
+                        await Console.Error.WriteLineAsync("Failed to authenticate with Steam: " + ex.Message);
                         Abort(false);
                         return;
                     }
+
+                    _authSession = null;
                 }
+
+                SteamUser.LogOn(_logonDetails);
             }
-
-            if (_authSession != null)
-            {
-                try
-                {
-                    var result = await _authSession.PollingWaitForResultAsync();
-
-                    _logonDetails.Username = result.AccountName;
-                    _logonDetails.Password = null;
-                    _logonDetails.AccessToken = result.RefreshToken;
-
-                    if (result.NewGuardData != null)
-                    {
-                        AccountSettingsStore.Instance.GuardData[result.AccountName] = result.NewGuardData;
-
-                        if (ContentDownloader.Config.UseQrCode)
-                            Console.WriteLine(
-                                $"Success! Next time you can login with -username {result.AccountName} -remember-password instead of -qr.");
-                    }
-                    else
-                    {
-                        AccountSettingsStore.Instance.GuardData.Remove(result.AccountName);
-                    }
-
-                    AccountSettingsStore.Instance.LoginTokens[result.AccountName] = result.RefreshToken;
-                    AccountSettingsStore.Save();
-                }
-                catch (TaskCanceledException)
-                {
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine("Failed to authenticate with Steam: " + ex.Message);
-                    Abort(false);
-                    return;
-                }
-
-                _authSession = null;
-            }
-
-            SteamUser.LogOn(_logonDetails);
+        }
+        catch (Exception ex)
+        {
+            // Catch any unhandled exceptions to prevent application crash
+            await Console.Error.WriteLineAsync($"Unhandled exception in connection callback: {ex.Message}");
+            Abort(false);
         }
     }
 
@@ -529,10 +557,9 @@ internal class Steam3Session
         {
             _connectionBackoff += 1;
 
-            if (_bConnecting)
-                Console.WriteLine($"Connection to Steam failed. Trying again (#{_connectionBackoff})...");
-            else
-                Console.WriteLine("Lost connection to Steam. Reconnecting");
+            Console.WriteLine(_bConnecting
+                ? $"Connection to Steam failed. Trying again (#{_connectionBackoff})..."
+                : "Lost connection to Steam. Reconnecting");
 
             Thread.Sleep(1000 * _connectionBackoff);
 
@@ -570,7 +597,8 @@ internal class Steam3Session
             }
             else if (isAccessToken)
             {
-                AccountSettingsStore.Instance.LoginTokens.Remove(_logonDetails.Username);
+                if (_logonDetails.Username != null)
+                    AccountSettingsStore.Instance.LoginTokens.Remove(_logonDetails.Username);
                 AccountSettingsStore.Save();
 
                 // TODO: Handle gracefully by falling back to password prompt?
@@ -646,18 +674,5 @@ internal class Steam3Session
         foreach (var license in licenseList.LicenseList)
             if (license.AccessToken > 0)
                 PackageTokens.TryAdd(license.PackageID, license.AccessToken);
-    }
-
-    private static void DisplayQrCode(string challengeUrl)
-    {
-        // Encode the link as a QR code
-        using var qrGenerator = new QRCodeGenerator();
-        var qrCodeData = qrGenerator.CreateQrCode(challengeUrl, QRCodeGenerator.ECCLevel.L);
-        using var qrCode = new AsciiQRCode(qrCodeData);
-        var qrCodeAsAsciiArt = qrCode.GetLineByLineGraphic(1, drawQuietZones: true);
-
-        Console.WriteLine("Use the Steam Mobile App to sign in with this QR code:");
-
-        foreach (var line in qrCodeAsAsciiArt) Console.WriteLine(line);
     }
 }
