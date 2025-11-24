@@ -1,45 +1,37 @@
-// This file is subject to the terms and conditions defined
-// in file 'LICENSE', which is part of this source code package.
-
 using System;
 using System.Diagnostics.Tracing;
 using System.Text;
 
-namespace DepotDownloader
+namespace DepotDownloader;
+
+internal sealed class HttpDiagnosticEventListener : EventListener
 {
-    internal sealed class HttpDiagnosticEventListener : EventListener
+    private const EventKeywords TasksFlowActivityIds = (EventKeywords)0x80;
+
+    protected override void OnEventSourceCreated(EventSource eventSource)
     {
-        public const EventKeywords TasksFlowActivityIds = (EventKeywords)0x80;
-
-        protected override void OnEventSourceCreated(EventSource eventSource)
+        switch (eventSource.Name)
         {
-            if (eventSource.Name == "System.Net.Http" ||
-                eventSource.Name == "System.Net.Sockets" ||
-                eventSource.Name == "System.Net.Security" ||
-                eventSource.Name == "System.Net.NameResolution")
-            {
+            case "System.Net.Http" or "System.Net.Sockets" or "System.Net.Security" or "System.Net.NameResolution":
                 EnableEvents(eventSource, EventLevel.LogAlways);
-            }
-            else if (eventSource.Name == "System.Threading.Tasks.TplEventSource")
-            {
+                break;
+            case "System.Threading.Tasks.TplEventSource":
                 EnableEvents(eventSource, EventLevel.LogAlways, TasksFlowActivityIds);
-            }
+                break;
         }
+    }
 
-        protected override void OnEventWritten(EventWrittenEventArgs eventData)
+    protected override void OnEventWritten(EventWrittenEventArgs eventData)
+    {
+        var sb = new StringBuilder().Append(
+            $"{eventData.TimeStamp:HH:mm:ss.fffffff}  {eventData.EventSource.Name}.{eventData.EventName}(");
+        for (var i = 0; i < eventData.Payload?.Count; i++)
         {
-            var sb = new StringBuilder().Append($"{eventData.TimeStamp:HH:mm:ss.fffffff}  {eventData.EventSource.Name}.{eventData.EventName}(");
-            for (var i = 0; i < eventData.Payload?.Count; i++)
-            {
-                sb.Append(eventData.PayloadNames?[i]).Append(": ").Append(eventData.Payload[i]);
-                if (i < eventData.Payload?.Count - 1)
-                {
-                    sb.Append(", ");
-                }
-            }
-
-            sb.Append(')');
-            Console.WriteLine(sb.ToString());
+            sb.Append(eventData.PayloadNames?[i]).Append(": ").Append(eventData.Payload[i]);
+            if (i < eventData.Payload?.Count - 1) sb.Append(", ");
         }
+
+        sb.Append(')');
+        Console.WriteLine(sb.ToString());
     }
 }
