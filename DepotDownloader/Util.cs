@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -13,9 +12,6 @@ namespace DepotDownloader;
 
 internal static class Util
 {
-    private static Process _currentQrViewerProcess;
-    private static string _currentQrImagePath;
-
     public static string GetSteamOs()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return "windows";
@@ -69,22 +65,11 @@ internal static class Util
 
     public static void DisplayQrCode(string challengeUrl)
     {
-        // Close any existing QR viewer before displaying a new one
-        CloseQrViewer();
-
         // Generate QR code
         using var qrGenerator = new QRCodeGenerator();
         var qrCodeData = qrGenerator.CreateQrCode(challengeUrl, QRCodeGenerator.ECCLevel.L);
 
-        // TODO: Re-enable image display when cross-platform image viewing is more reliable
-        // Try to display as image first (better UX)
-        //if (TryDisplayQrCodeAsImage(qrCodeData))
-        //{
-        //    Console.WriteLine("A QR code has been displayed. Use the Steam Mobile App to sign in.");
-        //    return;
-        //}
-
-        // Fallback to ASCII art in console
+        // Default to ASCII art in console
         using var qrCode = new AsciiQRCode(qrCodeData);
         var qrCodeAsAsciiArt = qrCode.GetLineByLineGraphic(1, drawQuietZones: true);
 
@@ -93,104 +78,6 @@ internal static class Util
 
         foreach (var line in qrCodeAsAsciiArt) Console.WriteLine(line);
     }
-
-    public static void CloseQrViewer()
-    {
-        // Close the viewer process if it exists and hasn't exited
-        if (_currentQrViewerProcess is { HasExited: false })
-            try
-            {
-                _currentQrViewerProcess.Kill();
-                _currentQrViewerProcess.Dispose();
-            }
-            catch
-            {
-                // Ignore errors if process already closed
-            }
-
-        // Clean up the temp image file
-        if (!string.IsNullOrEmpty(_currentQrImagePath) && File.Exists(_currentQrImagePath))
-            try
-            {
-                File.Delete(_currentQrImagePath);
-            }
-            catch
-            {
-                // Ignore cleanup errors
-            }
-
-        _currentQrViewerProcess = null;
-        _currentQrImagePath = null;
-    }
-
-    // TODO: Re-enable image display when cross-platform image viewing is more reliable
-    //private static bool TryDisplayQrCodeAsImage(QRCodeData qrCodeData)
-    //{
-    //    try
-    //    {
-    //        // Generate PNG image
-    //        using var qrCode = new PngByteQRCode(qrCodeData);
-    //        var qrCodeBytes = qrCode.GetGraphic(20); // 20 pixels per module
-
-    //        // Save to temp file
-    //        var tempPath = Path.Combine(Path.GetTempPath(), $"steam_qr_{Guid.NewGuid()}.png");
-    //        File.WriteAllBytes(tempPath, qrCodeBytes);
-    //        _currentQrImagePath = tempPath;
-
-    //        // Try to open with platform-specific command
-    //        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-    //        {
-    //            // Windows: Use default image viewer
-    //            _currentQrViewerProcess = Process.Start(new ProcessStartInfo
-    //            {
-    //                FileName = tempPath,
-    //                UseShellExecute = true
-    //            });
-    //            return true;
-    //        }
-
-    //        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-    //        {
-    //            // macOS: Use 'open' command
-    //            _currentQrViewerProcess = Process.Start("open", tempPath);
-    //            return true;
-    //        }
-
-    //        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-    //        {
-    //            // Linux: Try common image viewers
-    //            var viewers = new[] { "xdg-open", "eog", "display", "feh", "gpicview" };
-    //            foreach (var viewer in viewers)
-    //                try
-    //                {
-    //                    _currentQrViewerProcess = Process.Start(viewer, tempPath);
-    //                    return true;
-    //                }
-    //                catch
-    //                {
-    //                    // Try next viewer
-    //                }
-    //        }
-
-    //        // Cleanup if we couldn't open it
-    //        try
-    //        {
-    //            File.Delete(tempPath);
-    //        }
-    //        catch
-    //        {
-    //            // Ignored - temp file cleanup is not critical
-    //        }
-
-    //        _currentQrImagePath = null;
-    //        return false;
-    //    }
-    //    catch
-    //    {
-    //        // If anything fails, fall back to ASCII art
-    //        return false;
-    //    }
-    //}
 
     // Validate a file against Steam3 Chunk data
     public static List<DepotManifest.ChunkData> ValidateSteam3FileChecksums(FileStream fs,
