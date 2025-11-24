@@ -75,7 +75,7 @@ internal static partial class AnsiDetector
 
             if (!upgrade) return false;
 
-            // Try enable ANSI support.
+            // Try to enable ANSI support.
             mode |= CONSOLE_MODE.ENABLE_VIRTUAL_TERMINAL_PROCESSING | CONSOLE_MODE.DISABLE_NEWLINE_AUTO_RETURN;
             if (!PInvoke.SetConsoleMode(@out, mode))
                 // Enabling failed.
