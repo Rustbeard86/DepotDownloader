@@ -463,7 +463,7 @@ internal static class ContentDownloader
             if (workshopDepot != 0 && !depotIdsExpected.Contains(workshopDepot))
             {
                 depotIdsExpected.Add(workshopDepot);
-                depotManifestIds = depotManifestIds.Select(pair => (workshopDepot, pair.manifestId)).ToList();
+                depotManifestIds = [.. depotManifestIds.Select(pair => (workshopDepot, pair.manifestId))];
             }
 
             depotIdsFound.AddRange(depotIdsExpected);
@@ -680,11 +680,10 @@ internal static class ContentDownloader
         Console.WriteLine("Processing depot {0}", depot.DepotId);
 
         DepotManifest oldManifest = null;
-        DepotManifest newManifest = null;
+        DepotManifest newManifest;
         var configDir = Path.Combine(depot.InstallDir, ConfigDir);
 
-        var lastManifestId = InvalidManifestId;
-        DepotConfigStore.Instance.InstalledManifestIDs.TryGetValue(depot.DepotId, out lastManifestId);
+        DepotConfigStore.Instance.InstalledManifestIDs.TryGetValue(depot.DepotId, out var lastManifestId);
 
         // In case we have an early exit, this will force equiv of verifyall next run.
         DepotConfigStore.Instance.InstalledManifestIDs[depot.DepotId] = InvalidManifestId;
@@ -905,13 +904,13 @@ internal static class ContentDownloader
             CancellationToken = cts.Token
         };
 
-        await Parallel.ForEachAsync(files, parallelOptions, async (file, cancellationToken) =>
+        await Parallel.ForEachAsync(files, parallelOptions, async (file, _) =>
         {
             await Task.Yield();
             DownloadSteam3AsyncDepotFile(cts, downloadCounter, depotFilesData, file, networkChunkQueue);
         });
 
-        await Parallel.ForEachAsync(networkChunkQueue, parallelOptions, async (q, cancellationToken) =>
+        await Parallel.ForEachAsync(networkChunkQueue, parallelOptions, async (q, _) =>
         {
             await DownloadSteam3AsyncDepotFileChunk(
                 cts, downloadCounter, depotFilesData,
@@ -994,7 +993,7 @@ internal static class ContentDownloader
                     ex.Message));
             }
 
-            neededChunks = new List<DepotManifest.ChunkData>(file.Chunks);
+            neededChunks = [.. file.Chunks];
         }
         else
         {
@@ -1274,7 +1273,7 @@ internal static class ContentDownloader
             fileStreamData.FileLock.Dispose();
         }
 
-        ulong sizeDownloaded = 0;
+        ulong sizeDownloaded;
         lock (depotDownloadCounter)
         {
             sizeDownloaded = depotDownloadCounter.SizeDownloaded + (ulong)written;
