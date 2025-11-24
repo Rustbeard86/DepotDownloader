@@ -11,11 +11,14 @@ using System.Threading.Tasks;
 using SteamKit2;
 using SteamKit2.CDN;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
-internal class ContentDownloaderException(string value) : Exception(value);
+/// <summary>
+///     Exception thrown when content download operations fail.
+/// </summary>
+public class ContentDownloaderException(string value) : Exception(value);
 
-internal static class ContentDownloader
+public static class ContentDownloader
 {
     // Constants for validation sentinel values
     public const uint InvalidAppId = uint.MaxValue;

@@ -2,14 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Threading;
 using ProtoBuf;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 [ProtoContract]
-internal class DepotConfigStore
+public class DepotConfigStore
 {
-    public static DepotConfigStore Instance;
+    private static readonly Lock LockObject = new();
+    private static DepotConfigStore _instance;
     private static IUserInterface _userInterface;
 
     private string _fileName;
@@ -21,7 +23,34 @@ internal class DepotConfigStore
 
     [ProtoMember(1)] public Dictionary<uint, ulong> InstalledManifestIDs { get; private set; }
 
-    private static bool Loaded => Instance != null;
+    /// <summary>
+    ///     Gets the singleton instance of DepotConfigStore.
+    ///     Thread-safe access to the loaded configuration.
+    /// </summary>
+    public static DepotConfigStore Instance
+    {
+        get
+        {
+            lock (LockObject)
+            {
+                if (_instance == null)
+                    throw new InvalidOperationException(
+                        "DepotConfigStore has not been loaded. Call LoadFromFile first.");
+                return _instance;
+            }
+        }
+    }
+
+    private static bool Loaded
+    {
+        get
+        {
+            lock (LockObject)
+            {
+                return _instance != null;
+            }
+        }
+    }
 
     public static void Initialize(IUserInterface userInterface)
     {
@@ -30,43 +59,53 @@ internal class DepotConfigStore
 
     public static void LoadFromFile(string filename)
     {
-        if (Loaded)
-            throw new Exception("Config already loaded");
+        lock (LockObject)
+        {
+            if (_instance != null)
+                throw new InvalidOperationException("Config already loaded");
 
-        if (File.Exists(filename))
-            try
-            {
-                using var fs = File.Open(filename, FileMode.Open, FileAccess.Read);
-                using var ds = new DeflateStream(fs, CompressionMode.Decompress);
-                Instance = Serializer.Deserialize<DepotConfigStore>(ds);
-
-                if (Instance == null)
+            if (File.Exists(filename))
+                try
                 {
-                    _userInterface?.WriteLine("Failed to load depot config: deserialization returned null");
-                    Instance = new DepotConfigStore();
-                }
-            }
-            catch (Exception ex)
-            {
-                _userInterface?.WriteLine("Failed to load depot config: {0}", ex.Message);
-                Instance = new DepotConfigStore();
-            }
-        else
-            Instance = new DepotConfigStore();
+                    using var fs = File.Open(filename, FileMode.Open, FileAccess.Read);
+                    using var ds = new DeflateStream(fs, CompressionMode.Decompress);
+                    _instance = Serializer.Deserialize<DepotConfigStore>(ds);
 
-        Instance._fileName = filename;
+                    if (_instance == null)
+                    {
+                        _userInterface?.WriteLine("Failed to load depot config: deserialization returned null");
+                        _instance = new DepotConfigStore();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _userInterface?.WriteLine("Failed to load depot config: {0}", ex.Message);
+                    _instance = new DepotConfigStore();
+                }
+            else
+                _instance = new DepotConfigStore();
+
+            _instance._fileName = filename;
+        }
     }
 
     public static void Save()
     {
-        if (!Loaded)
-            throw new Exception("Saved config before loading");
+        DepotConfigStore instance;
+
+        lock (LockObject)
+        {
+            if (_instance == null)
+                throw new InvalidOperationException("Cannot save config before loading");
+
+            instance = _instance;
+        }
 
         try
         {
-            using var fs = File.Open(Instance._fileName, FileMode.Create, FileAccess.Write);
+            using var fs = File.Open(instance._fileName, FileMode.Create, FileAccess.Write);
             using var ds = new DeflateStream(fs, CompressionMode.Compress);
-            Serializer.Serialize(ds, Instance);
+            Serializer.Serialize(ds, instance);
         }
         catch (Exception ex)
         {

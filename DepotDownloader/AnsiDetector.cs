@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 using Windows.Win32;
 using Windows.Win32.System.Console;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 internal static partial class AnsiDetector
 {

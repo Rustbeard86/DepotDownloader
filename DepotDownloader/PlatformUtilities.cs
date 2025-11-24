@@ -1,7 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 internal static class PlatformUtilities
 {

@@ -7,7 +7,7 @@ using System.Text;
 using ProtoBuf;
 using SteamKit2;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 [ProtoContract]
 internal class ProtoManifest

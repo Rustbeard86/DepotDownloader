@@ -1,7 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Headers;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 internal class HttpClientFactory
 {

@@ -7,10 +7,10 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using DepotDownloader.Lib;
 using SteamKit2;
-using SteamKit2.CDN;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Client;
 
 internal class Program
 {
@@ -143,8 +143,8 @@ internal class Program
 
             if (HasParameter(args, "-use-lancache"))
             {
-                await Client.DetectLancacheServerAsync();
-                if (Client.UseLancacheServer)
+                await SteamKit2.CDN.Client.DetectLancacheServerAsync();
+                if (SteamKit2.CDN.Client.UseLancacheServer)
                 {
                     _userInterface.WriteLine(
                         "Detected Lancache server! Downloads will be directed through the Lancache.");

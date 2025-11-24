@@ -2,9 +2,9 @@ using System;
 using System.Diagnostics.Tracing;
 using System.Text;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
-internal sealed class HttpDiagnosticEventListener(IUserInterface userInterface) : EventListener
+public sealed class HttpDiagnosticEventListener(IUserInterface userInterface) : EventListener
 {
     private const EventKeywords TasksFlowActivityIds = (EventKeywords)0x80;
 

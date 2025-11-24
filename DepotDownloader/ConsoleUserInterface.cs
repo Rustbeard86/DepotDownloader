@@ -2,12 +2,12 @@ using System;
 using System.Text;
 using QRCoder;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 /// <summary>
 ///     Console-based implementation of IUserInterface.
 /// </summary>
-internal class ConsoleUserInterface : IUserInterface
+public class ConsoleUserInterface : IUserInterface
 {
     public void Write(string message)
     {

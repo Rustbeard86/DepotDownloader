@@ -5,7 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using SteamKit2.CDN;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 /// <summary>
 ///     CDNClientPool provides a pool of connections to CDN endpoints, requesting CDN tokens as needed

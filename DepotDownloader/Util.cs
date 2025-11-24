@@ -6,9 +6,9 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using SteamKit2;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
-internal static class Util
+public static class Util
 {
     private static IUserInterface _userInterface;
 

@@ -10,7 +10,7 @@ using SteamKit2.Authentication;
 using SteamKit2.CDN;
 using SteamKit2.Internal;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 internal class Steam3Session
 {

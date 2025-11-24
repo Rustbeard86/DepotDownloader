@@ -1,9 +1,9 @@
 ﻿using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
-internal class DownloadConfig
+public class DownloadConfig
 {
     // Authentication settings
     public bool RememberPassword { get; set; }

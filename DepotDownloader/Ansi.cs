@@ -1,6 +1,6 @@
 using System;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 public static class Ansi
 {

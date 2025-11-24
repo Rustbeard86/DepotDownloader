@@ -2,7 +2,7 @@ using System;
 using System.Threading.Tasks;
 using SteamKit2.Authentication;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 // This is practically copied from https://github.com/SteamRE/SteamKit/blob/master/SteamKit2/SteamKit2/Steam/Authentication/UserConsoleAuthenticator.cs
 internal class ConsoleAuthenticator(IUserInterface userInterface) : IAuthenticator

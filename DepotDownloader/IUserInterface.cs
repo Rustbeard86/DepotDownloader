@@ -1,6 +1,6 @@
 using System;
 
-namespace DepotDownloader;
+namespace DepotDownloader.Lib;
 
 /// <summary>
 ///     Abstraction for user interaction, allowing the library to be decoupled from Console.
