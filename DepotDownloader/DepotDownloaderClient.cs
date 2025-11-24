@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using SteamKit2;
@@ -203,10 +204,10 @@ public sealed class DepotDownloaderClient : IDisposable
     ///     Applies download options to the ContentDownloader configuration.
     /// </summary>
     /// <remarks>
-    /// This method is intentionally not static as it's part of the client's instance API.
-    /// It may need to access instance state in future enhancements.
+    ///     This method is intentionally not static as it's part of the client's instance API.
+    ///     It may need to access instance state in future enhancements.
     /// </remarks>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1822:Mark members as static", 
+    [SuppressMessage("Performance", "CA1822:Mark members as static",
         Justification = "Method is part of instance API and may need instance access in future")]
     private void ApplyConfiguration(DepotDownloadOptions options)
     {

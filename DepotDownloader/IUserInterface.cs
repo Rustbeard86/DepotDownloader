@@ -23,10 +23,10 @@ public interface IUserInterface
     void Write(string message);
 
     /// <summary>
-    /// Writes a debug/diagnostic message (goes to stderr in console, can be filtered).
+    ///     Writes a debug/diagnostic message (goes to stderr in console, can be filtered).
     /// </summary>
     void WriteDebug(string category, string message);
-    
+
     /// <summary>
     ///     Writes a formatted message to the output.
     /// </summary>
