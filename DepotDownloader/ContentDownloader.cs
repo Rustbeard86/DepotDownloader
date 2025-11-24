@@ -527,7 +527,7 @@ namespace DepotDownloader
                                     !string.IsNullOrWhiteSpace(depotConfig["oslist"].Value))
                                 {
                                     var oslist = depotConfig["oslist"].Value.Split(',');
-                                    if (Array.IndexOf(oslist, os ?? Util.GetSteamOS()) == -1)
+                                    if (Array.IndexOf(oslist, os ?? Util.GetSteamOs()) == -1)
                                         continue;
                                 }
 
