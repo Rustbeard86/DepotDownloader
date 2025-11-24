@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -65,15 +66,92 @@ internal static class Util
 
     public static void DisplayQrCode(string challengeUrl)
     {
-        // Encode the link as a QR code
+        // Generate QR code
         using var qrGenerator = new QRCodeGenerator();
         var qrCodeData = qrGenerator.CreateQrCode(challengeUrl, QRCodeGenerator.ECCLevel.L);
+
+        // Try to display as image first (better UX)
+        if (TryDisplayQrCodeAsImage(qrCodeData))
+        {
+            Console.WriteLine("A QR code has been displayed. Use the Steam Mobile App to sign in.");
+            Console.WriteLine("Press Enter to continue after scanning, or close the image window...");
+            return;
+        }
+
+        // Fallback to ASCII art in console
         using var qrCode = new AsciiQRCode(qrCodeData);
         var qrCodeAsAsciiArt = qrCode.GetLineByLineGraphic(1, drawQuietZones: true);
 
         Console.WriteLine("Use the Steam Mobile App to sign in with this QR code:");
+        Console.WriteLine();
 
         foreach (var line in qrCodeAsAsciiArt) Console.WriteLine(line);
+    }
+
+    private static bool TryDisplayQrCodeAsImage(QRCodeData qrCodeData)
+    {
+        try
+        {
+            // Generate PNG image
+            using var qrCode = new PngByteQRCode(qrCodeData);
+            var qrCodeBytes = qrCode.GetGraphic(20); // 20 pixels per module
+
+            // Save to temp file
+            var tempPath = Path.Combine(Path.GetTempPath(), $"steam_qr_{Guid.NewGuid()}.png");
+            File.WriteAllBytes(tempPath, qrCodeBytes);
+
+            // Try to open with platform-specific command
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                // Windows: Use default image viewer
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = tempPath,
+                    UseShellExecute = true
+                });
+                return true;
+            }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                // macOS: Use 'open' command
+                Process.Start("open", tempPath);
+                return true;
+            }
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                // Linux: Try common image viewers
+                var viewers = new[] { "xdg-open", "eog", "display", "feh", "gpicview" };
+                foreach (var viewer in viewers)
+                    try
+                    {
+                        Process.Start(viewer, tempPath);
+                        return true;
+                    }
+                    catch
+                    {
+                        // Try next viewer
+                    }
+            }
+
+            // Cleanup if we couldn't open it
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch
+            {
+                // Ignored - temp file cleanup is not critical
+            }
+
+            return false;
+        }
+        catch
+        {
+            // If anything fails, fall back to ASCII art
+            return false;
+        }
     }
 
     // Validate a file against Steam3 Chunk data
@@ -191,36 +269,5 @@ internal static class Util
         {
             return false; // Return false if an error occurs
         }
-    }
-
-    // TODO: Unused method
-    public static byte[] DecodeHexString(string hex)
-    {
-        if (hex == null) return null;
-
-        var chars = hex.Length;
-        var bytes = new byte[chars / 2];
-
-        for (var i = 0; i < chars; i += 2) bytes[i / 2] = Convert.ToByte(hex.Substring(i, 2), 16);
-
-        return bytes;
-    }
-
-    // TODO: Unused method
-    /// <summary>
-    ///     Decrypts using AES/ECB/PKCS7
-    /// </summary>
-    public static byte[] SymmetricDecryptEcb(byte[] input, byte[] key)
-    {
-        using var aes = Aes.Create();
-        aes.BlockSize = 128;
-        aes.KeySize = 256;
-        aes.Mode = CipherMode.ECB;
-        aes.Padding = PaddingMode.PKCS7;
-
-        using var aesTransform = aes.CreateDecryptor(key, null);
-        var output = aesTransform.TransformFinalBlock(input, 0, input.Length);
-
-        return output;
     }
 }
