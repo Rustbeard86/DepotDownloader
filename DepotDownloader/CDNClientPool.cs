@@ -21,12 +21,12 @@ internal class CdnClientPool(Steam3Session steamSession, uint appId)
     private readonly List<Server> _servers = [];
     private int _nextServer;
 
-    public Client CdnClient { get; } = new(steamSession.steamClient);
+    public Client CdnClient { get; } = new(steamSession.SteamClient);
     public Server ProxyServer { get; private set; }
 
     public async Task UpdateServerList()
     {
-        var servers = await steamSession.steamContent.GetServersForSteamPipe();
+        var servers = await steamSession.SteamContent.GetServersForSteamPipe();
 
         ProxyServer = servers.FirstOrDefault(x => x.UseAsProxy);
 

@@ -119,11 +119,11 @@ namespace DepotDownloader
 
         static async Task<bool> AccountHasAccess(uint appId, uint depotId)
         {
-            if (steam3 == null || steam3.steamUser.SteamID == null || (steam3.Licenses == null && steam3.steamUser.SteamID.AccountType != EAccountType.AnonUser))
+            if (steam3 == null || steam3.SteamUser.SteamID == null || (steam3.Licenses == null && steam3.SteamUser.SteamID.AccountType != EAccountType.AnonUser))
                 return false;
 
             IEnumerable<uint> licenseQuery;
-            if (steam3.steamUser.SteamID.AccountType == EAccountType.AnonUser)
+            if (steam3.SteamUser.SteamID.AccountType == EAccountType.AnonUser)
             {
                 licenseQuery = [17906];
             }
@@ -401,9 +401,9 @@ namespace DepotDownloader
         {
             SteamCloud.UGCDetailsCallback details = null;
 
-            if (steam3.steamUser.SteamID.AccountType != EAccountType.AnonUser)
+            if (steam3.SteamUser.SteamID.AccountType != EAccountType.AnonUser)
             {
-                details = await steam3.GetUGCDetails(ugcId);
+                details = await steam3.GetUgcDetails(ugcId);
             }
             else
             {
@@ -469,7 +469,7 @@ namespace DepotDownloader
 
             if (!await AccountHasAccess(appId, appId))
             {
-                if (steam3.steamUser.SteamID.AccountType != EAccountType.AnonUser && await steam3.RequestFreeAppLicense(appId))
+                if (steam3.SteamUser.SteamID.AccountType != EAccountType.AnonUser && await steam3.RequestFreeAppLicense(appId))
                 {
                     Console.WriteLine("Obtained FreeOnDemand license for app {0}", appId);
 
@@ -805,7 +805,7 @@ namespace DepotDownloader
                             connection = cdnPool.GetConnection();
 
                             string cdnToken = null;
-                            if (steam3.CDNAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise))
+                            if (steam3.CdnAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise))
                             {
                                 var result = await authTokenCallbackPromise.Task;
                                 cdnToken = result.Token;
@@ -855,9 +855,9 @@ namespace DepotDownloader
                         catch (SteamKitWebRequestException e)
                         {
                             // If the CDN returned 403, attempt to get a cdn auth if we didn't yet
-                            if (e.StatusCode == HttpStatusCode.Forbidden && !steam3.CDNAuthTokens.ContainsKey((depot.DepotId, connection.Host)))
+                            if (e.StatusCode == HttpStatusCode.Forbidden && !steam3.CdnAuthTokens.ContainsKey((depot.DepotId, connection.Host)))
                             {
-                                await steam3.RequestCDNAuthToken(depot.AppId, depot.DepotId, connection);
+                                await steam3.RequestCdnAuthToken(depot.AppId, depot.DepotId, connection);
 
                                 cdnPool.ReturnConnection(connection);
 
@@ -1255,7 +1255,7 @@ namespace DepotDownloader
                         connection = cdnPool.GetConnection();
 
                         string cdnToken = null;
-                        if (steam3.CDNAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise))
+                        if (steam3.CdnAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise))
                         {
                             var result = await authTokenCallbackPromise.Task;
                             cdnToken = result.Token;
@@ -1285,9 +1285,9 @@ namespace DepotDownloader
                         // If the CDN returned 403, attempt to get a cdn auth if we didn't yet,
                         // if auth task already exists, make sure it didn't complete yet, so that it gets awaited above
                         if (e.StatusCode == HttpStatusCode.Forbidden &&
-                            (!steam3.CDNAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise) || !authTokenCallbackPromise.Task.IsCompleted))
+                            (!steam3.CdnAuthTokens.TryGetValue((depot.DepotId, connection.Host), out var authTokenCallbackPromise) || !authTokenCallbackPromise.Task.IsCompleted))
                         {
-                            await steam3.RequestCDNAuthToken(depot.AppId, depot.DepotId, connection);
+                            await steam3.RequestCdnAuthToken(depot.AppId, depot.DepotId, connection);
 
                             cdnPool.ReturnConnection(connection);
 
