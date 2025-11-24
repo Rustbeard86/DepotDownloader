@@ -76,12 +76,13 @@ internal static class Util
         using var qrGenerator = new QRCodeGenerator();
         var qrCodeData = qrGenerator.CreateQrCode(challengeUrl, QRCodeGenerator.ECCLevel.L);
 
+        // TODO: Re-enable image display when cross-platform image viewing is more reliable
         // Try to display as image first (better UX)
-        if (TryDisplayQrCodeAsImage(qrCodeData))
-        {
-            Console.WriteLine("A QR code has been displayed. Use the Steam Mobile App to sign in.");
-            return;
-        }
+        //if (TryDisplayQrCodeAsImage(qrCodeData))
+        //{
+        //    Console.WriteLine("A QR code has been displayed. Use the Steam Mobile App to sign in.");
+        //    return;
+        //}
 
         // Fallback to ASCII art in console
         using var qrCode = new AsciiQRCode(qrCodeData);
@@ -122,73 +123,74 @@ internal static class Util
         _currentQrImagePath = null;
     }
 
-    private static bool TryDisplayQrCodeAsImage(QRCodeData qrCodeData)
-    {
-        try
-        {
-            // Generate PNG image
-            using var qrCode = new PngByteQRCode(qrCodeData);
-            var qrCodeBytes = qrCode.GetGraphic(20); // 20 pixels per module
+    // TODO: Re-enable image display when cross-platform image viewing is more reliable
+    //private static bool TryDisplayQrCodeAsImage(QRCodeData qrCodeData)
+    //{
+    //    try
+    //    {
+    //        // Generate PNG image
+    //        using var qrCode = new PngByteQRCode(qrCodeData);
+    //        var qrCodeBytes = qrCode.GetGraphic(20); // 20 pixels per module
 
-            // Save to temp file
-            var tempPath = Path.Combine(Path.GetTempPath(), $"steam_qr_{Guid.NewGuid()}.png");
-            File.WriteAllBytes(tempPath, qrCodeBytes);
-            _currentQrImagePath = tempPath;
+    //        // Save to temp file
+    //        var tempPath = Path.Combine(Path.GetTempPath(), $"steam_qr_{Guid.NewGuid()}.png");
+    //        File.WriteAllBytes(tempPath, qrCodeBytes);
+    //        _currentQrImagePath = tempPath;
 
-            // Try to open with platform-specific command
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                // Windows: Use default image viewer
-                _currentQrViewerProcess = Process.Start(new ProcessStartInfo
-                {
-                    FileName = tempPath,
-                    UseShellExecute = true
-                });
-                return true;
-            }
+    //        // Try to open with platform-specific command
+    //        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+    //        {
+    //            // Windows: Use default image viewer
+    //            _currentQrViewerProcess = Process.Start(new ProcessStartInfo
+    //            {
+    //                FileName = tempPath,
+    //                UseShellExecute = true
+    //            });
+    //            return true;
+    //        }
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                // macOS: Use 'open' command
-                _currentQrViewerProcess = Process.Start("open", tempPath);
-                return true;
-            }
+    //        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+    //        {
+    //            // macOS: Use 'open' command
+    //            _currentQrViewerProcess = Process.Start("open", tempPath);
+    //            return true;
+    //        }
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                // Linux: Try common image viewers
-                var viewers = new[] { "xdg-open", "eog", "display", "feh", "gpicview" };
-                foreach (var viewer in viewers)
-                    try
-                    {
-                        _currentQrViewerProcess = Process.Start(viewer, tempPath);
-                        return true;
-                    }
-                    catch
-                    {
-                        // Try next viewer
-                    }
-            }
+    //        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+    //        {
+    //            // Linux: Try common image viewers
+    //            var viewers = new[] { "xdg-open", "eog", "display", "feh", "gpicview" };
+    //            foreach (var viewer in viewers)
+    //                try
+    //                {
+    //                    _currentQrViewerProcess = Process.Start(viewer, tempPath);
+    //                    return true;
+    //                }
+    //                catch
+    //                {
+    //                    // Try next viewer
+    //                }
+    //        }
 
-            // Cleanup if we couldn't open it
-            try
-            {
-                File.Delete(tempPath);
-            }
-            catch
-            {
-                // Ignored - temp file cleanup is not critical
-            }
+    //        // Cleanup if we couldn't open it
+    //        try
+    //        {
+    //            File.Delete(tempPath);
+    //        }
+    //        catch
+    //        {
+    //            // Ignored - temp file cleanup is not critical
+    //        }
 
-            _currentQrImagePath = null;
-            return false;
-        }
-        catch
-        {
-            // If anything fails, fall back to ASCII art
-            return false;
-        }
-    }
+    //        _currentQrImagePath = null;
+    //        return false;
+    //    }
+    //    catch
+    //    {
+    //        // If anything fails, fall back to ASCII art
+    //        return false;
+    //    }
+    //}
 
     // Validate a file against Steam3 Chunk data
     public static List<DepotManifest.ChunkData> ValidateSteam3FileChecksums(FileStream fs,
