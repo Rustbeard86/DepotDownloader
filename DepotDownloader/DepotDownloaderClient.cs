@@ -68,12 +68,15 @@ public sealed class DepotDownloaderClient : IDisposable
     /// <param name="username">Steam username.</param>
     /// <param name="password">Steam password. If null and no saved token exists, will prompt via IUserInterface.</param>
     /// <param name="rememberPassword">Save credentials for future use.</param>
+    /// <param name="skipAppConfirmation">Prefer entering a 2FA code instead of prompting to accept in the Steam mobile app.</param>
     /// <returns>True if authentication succeeded.</returns>
-    public bool Login(string username, string password = null, bool rememberPassword = false)
+    public bool Login(string username, string password = null, bool rememberPassword = false,
+        bool skipAppConfirmation = false)
     {
         ThrowIfDisposed();
 
         ContentDownloader.Config.RememberPassword = rememberPassword;
+        ContentDownloader.Config.SkipAppConfirmation = skipAppConfirmation;
 
         // Check for saved login token
         string loginToken = null;
@@ -111,10 +114,12 @@ public sealed class DepotDownloaderClient : IDisposable
     /// <summary>
     ///     Authenticates with Steam anonymously (limited access).
     /// </summary>
+    /// <param name="skipAppConfirmation">Prefer entering a 2FA code instead of prompting to accept in the Steam mobile app.</param>
     /// <returns>True if authentication succeeded.</returns>
-    public bool LoginAnonymous()
+    public bool LoginAnonymous(bool skipAppConfirmation = false)
     {
         ThrowIfDisposed();
+        ContentDownloader.Config.SkipAppConfirmation = skipAppConfirmation;
         return ContentDownloader.InitializeSteam3(null, null);
     }
 
@@ -122,13 +127,15 @@ public sealed class DepotDownloaderClient : IDisposable
     ///     Authenticates with Steam using QR code displayed via IUserInterface.
     /// </summary>
     /// <param name="rememberPassword">Save credentials for future use.</param>
+    /// <param name="skipAppConfirmation">Prefer entering a 2FA code instead of prompting to accept in the Steam mobile app.</param>
     /// <returns>True if authentication succeeded.</returns>
-    public bool LoginWithQrCode(bool rememberPassword = false)
+    public bool LoginWithQrCode(bool rememberPassword = false, bool skipAppConfirmation = false)
     {
         ThrowIfDisposed();
 
         ContentDownloader.Config.UseQrCode = true;
         ContentDownloader.Config.RememberPassword = rememberPassword;
+        ContentDownloader.Config.SkipAppConfirmation = skipAppConfirmation;
 
         return ContentDownloader.InitializeSteam3(null, null);
     }

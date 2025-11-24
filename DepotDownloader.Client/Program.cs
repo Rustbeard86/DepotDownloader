@@ -8,7 +8,6 @@ using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using DepotDownloader.Lib;
-using SteamKit2;
 
 namespace DepotDownloader.Client;
 
@@ -16,393 +15,243 @@ internal class Program
 {
     private static bool[] _consumedArgs;
     private static ConsoleUserInterface _userInterface;
-    private static HttpDiagnosticEventListener _httpEventListener;
 
     private static async Task<int> Main(string[] args)
     {
+        // Initialize the user interface first
+        _userInterface = new ConsoleUserInterface();
+
+        if (args.Length == 0)
+        {
+            PrintVersion();
+            PrintUsage();
+            return 0;
+        }
+
+        // Not using HasParameter because it is case-insensitive
+        if (args.Length == 1 && (args[0] == "-V" || args[0] == "--version"))
+        {
+            PrintVersion(true);
+            return 0;
+        }
+
+        _consumedArgs = new bool[args.Length];
+
+        // Create the library client - this handles all initialization
+        using var client = new DepotDownloaderClient(_userInterface);
+
+        // Enable debug logging if requested
+        if (HasParameter(args, "-debug"))
+        {
+            PrintVersion(true);
+            client.EnableDebugLogging();
+        }
+
+        // Parse authentication parameters
+        var username = GetParameter<string>(args, "-username") ?? GetParameter<string>(args, "-user");
+        var password = GetParameter<string>(args, "-password") ?? GetParameter<string>(args, "-pass");
+        var rememberPassword = HasParameter(args, "-remember-password");
+        var useQrCode = HasParameter(args, "-qr");
+        var skipAppConfirmation = HasParameter(args, "-no-mobile");
+
+        // Validate authentication parameter combinations
+        if (username == null)
+        {
+            if (rememberPassword && !useQrCode)
+            {
+                _userInterface.WriteLine("Error: -remember-password can not be used without -username or -qr.");
+                return 1;
+            }
+        }
+        else if (useQrCode)
+        {
+            _userInterface.WriteLine("Error: -qr can not be used with -username.");
+            return 1;
+        }
+
+        // Parse download options
+        var appId = GetParameter(args, "-app", ContentDownloader.InvalidAppId);
+        if (appId == ContentDownloader.InvalidAppId)
+        {
+            _userInterface.WriteLine("Error: -app not specified!");
+            return 1;
+        }
+
+        var pubFile = GetParameter(args, "-pubfile", ContentDownloader.InvalidManifestId);
+        var ugcId = GetParameter(args, "-ugc", ContentDownloader.InvalidManifestId);
+
+        // Build download options
+        var options = await BuildDownloadOptionsAsync(args, appId);
+
+        PrintUnconsumedArgs(args);
+
+        // Authenticate
+        bool loginSuccess;
+        if (useQrCode)
+            loginSuccess = client.LoginWithQrCode(rememberPassword, skipAppConfirmation);
+        else if (username != null)
+            loginSuccess = client.Login(username, password, rememberPassword, skipAppConfirmation);
+        else
+            loginSuccess = client.LoginAnonymous(skipAppConfirmation);
+
+        if (!loginSuccess)
+        {
+            _userInterface.WriteLine("Error: Authentication failed");
+            return 1;
+        }
+
+        // Perform download
         try
         {
-            // Initialize the user interface first
-            _userInterface = new ConsoleUserInterface();
-
-            // Initialize all components that need IUserInterface
-            Ansi.Initialize(_userInterface);
-            AccountSettingsStore.Initialize(_userInterface);
-            DepotConfigStore.Initialize(_userInterface);
-            ContentDownloader.Initialize(_userInterface);
-            Util.Initialize(_userInterface);
-
-            if (args.Length == 0)
-            {
-                PrintVersion();
-                PrintUsage();
-
-                return 0;
-            }
-
-            Ansi.Init();
-
-            DebugLog.Enabled = false;
-
-            AccountSettingsStore.LoadFromFile("account.config");
-
-            #region Common Options
-
-            // Not using HasParameter because it is case-insensitive
-            if (args.Length == 1 && (args[0] == "-V" || args[0] == "--version"))
-            {
-                PrintVersion(true);
-                return 0;
-            }
-
-            _consumedArgs = new bool[args.Length];
-
-            // Note: When -debug is enabled, you may see a TaskCanceledException from WebSocketContext
-            // during shutdown. This is normal SteamKit2 behavior when cancelling the connection.
-            if (HasParameter(args, "-debug"))
-            {
-                PrintVersion(true);
-
-                DebugLog.Enabled = true;
-                DebugLog.AddListener((category, message) => { _userInterface.WriteDebug(category, message); });
-
-                // Enable HTTP diagnostics for network debugging - keep reference to prevent GC
-                _httpEventListener = new HttpDiagnosticEventListener(_userInterface);
-            }
-
-            var username = GetParameter<string>(args, "-username") ?? GetParameter<string>(args, "-user");
-            var password = GetParameter<string>(args, "-password") ?? GetParameter<string>(args, "-pass");
-            ContentDownloader.Config.RememberPassword = HasParameter(args, "-remember-password");
-            ContentDownloader.Config.UseQrCode = HasParameter(args, "-qr");
-            ContentDownloader.Config.SkipAppConfirmation = HasParameter(args, "-no-mobile");
-
-            if (username == null)
-            {
-                if (ContentDownloader.Config.RememberPassword && !ContentDownloader.Config.UseQrCode)
-                {
-                    _userInterface.WriteLine("Error: -remember-password can not be used without -username or -qr.");
-                    return 1;
-                }
-            }
-            else if (ContentDownloader.Config.UseQrCode)
-            {
-                _userInterface.WriteLine("Error: -qr can not be used with -username.");
-                return 1;
-            }
-
-            ContentDownloader.Config.DownloadManifestOnly = HasParameter(args, "-manifest-only");
-
-            var cellId = GetParameter(args, "-cellid", -1);
-            if (cellId == -1) cellId = 0;
-
-            ContentDownloader.Config.CellId = cellId;
-
-            var fileList = GetParameter<string>(args, "-filelist");
-
-            if (fileList != null)
-            {
-                const string regexPrefix = "regex:";
-
-                try
-                {
-                    ContentDownloader.Config.UsingFileList = true;
-                    ContentDownloader.Config.FilesToDownload = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    ContentDownloader.Config.FilesToDownloadRegex = [];
-
-                    var files = await File.ReadAllLinesAsync(fileList);
-
-                    foreach (var fileEntry in files)
-                    {
-                        if (string.IsNullOrWhiteSpace(fileEntry)) continue;
-
-                        if (fileEntry.StartsWith(regexPrefix))
-                        {
-                            var rgx = new Regex(fileEntry[regexPrefix.Length..],
-                                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-                            ContentDownloader.Config.FilesToDownloadRegex.Add(rgx);
-                        }
-                        else
-                        {
-                            ContentDownloader.Config.FilesToDownload.Add(fileEntry.Replace('\\', '/'));
-                        }
-                    }
-
-                    _userInterface.WriteLine("Using filelist: '{0}'.", fileList);
-                }
-                catch (Exception ex)
-                {
-                    _userInterface.WriteLine("Warning: Unable to load filelist: {0}", ex);
-                }
-            }
-
-            ContentDownloader.Config.InstallDirectory = GetParameter<string>(args, "-dir");
-
-            ContentDownloader.Config.VerifyAll =
-                HasParameter(args, "-verify-all") || HasParameter(args, "-verify_all") ||
-                HasParameter(args, "-validate");
-
-            if (HasParameter(args, "-use-lancache"))
-            {
-                await SteamKit2.CDN.Client.DetectLancacheServerAsync();
-                if (SteamKit2.CDN.Client.UseLancacheServer)
-                {
-                    _userInterface.WriteLine(
-                        "Detected Lancache server! Downloads will be directed through the Lancache.");
-
-                    // Increasing the number of concurrent downloads when the cache is detected since the downloads will likely
-                    // be served much faster than over the internet.  Steam internally has this behavior as well.
-                    if (!HasParameter(args, "-max-downloads")) ContentDownloader.Config.MaxDownloads = 25;
-                }
-            }
-
-            ContentDownloader.Config.MaxDownloads = GetParameter(args, "-max-downloads", 8);
-            ContentDownloader.Config.LoginId =
-                HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null;
-
-            #endregion
-
-            var appId = GetParameter(args, "-app", ContentDownloader.InvalidAppId);
-            if (appId == ContentDownloader.InvalidAppId)
-            {
-                _userInterface.WriteLine("Error: -app not specified!");
-                return 1;
-            }
-
-            var pubFile = GetParameter(args, "-pubfile", ContentDownloader.InvalidManifestId);
-            var ugcId = GetParameter(args, "-ugc", ContentDownloader.InvalidManifestId);
             if (pubFile != ContentDownloader.InvalidManifestId)
-            {
-                #region Pubfile Downloading
-
-                PrintUnconsumedArgs(args);
-
-                if (InitializeSteam(username, password))
-                {
-                    try
-                    {
-                        await ContentDownloader.DownloadPubfileAsync(appId, pubFile).ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (
-                        ex is ContentDownloaderException
-                        || ex is OperationCanceledException)
-                    {
-                        _userInterface.WriteLine(ex.Message);
-                        return 1;
-                    }
-                    catch (Exception e)
-                    {
-                        _userInterface.WriteLine("Download failed to due to an unhandled exception: {0}", e.Message);
-                        throw;
-                    }
-                    finally
-                    {
-                        ContentDownloader.ShutdownSteam3();
-                    }
-                }
-                else
-                {
-                    _userInterface.WriteLine("Error: InitializeSteam failed");
-                    return 1;
-                }
-
-                #endregion
-            }
+                await client.DownloadPublishedFileAsync(appId, pubFile);
             else if (ugcId != ContentDownloader.InvalidManifestId)
-            {
-                #region UGC Downloading
-
-                PrintUnconsumedArgs(args);
-
-                if (InitializeSteam(username, password))
-                {
-                    try
-                    {
-                        await ContentDownloader.DownloadUgcAsync(appId, ugcId).ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (
-                        ex is ContentDownloaderException
-                        || ex is OperationCanceledException)
-                    {
-                        _userInterface.WriteLine(ex.Message);
-                        return 1;
-                    }
-                    catch (Exception e)
-                    {
-                        _userInterface.WriteLine("Download failed to due to an unhandled exception: {0}", e.Message);
-                        throw;
-                    }
-                    finally
-                    {
-                        ContentDownloader.ShutdownSteam3();
-                    }
-                }
-                else
-                {
-                    _userInterface.WriteLine("Error: InitializeSteam failed");
-                    return 1;
-                }
-
-                #endregion
-            }
+                await client.DownloadUgcAsync(appId, ugcId);
             else
-            {
-                #region App downloading
-
-                var branch = GetParameter<string>(args, "-branch") ??
-                             GetParameter<string>(args, "-beta") ?? ContentDownloader.DefaultBranch;
-                ContentDownloader.Config.BetaPassword = GetParameter<string>(args, "-branchpassword") ??
-                                                        GetParameter<string>(args, "-betapassword");
-
-                if (!string.IsNullOrEmpty(ContentDownloader.Config.BetaPassword) && string.IsNullOrEmpty(branch))
-                {
-                    _userInterface.WriteLine("Error: Cannot specify -branchpassword when -branch is not specified.");
-                    return 1;
-                }
-
-                ContentDownloader.Config.DownloadAllPlatforms = HasParameter(args, "-all-platforms");
-
-                var os = GetParameter<string>(args, "-os");
-
-                if (ContentDownloader.Config.DownloadAllPlatforms && !string.IsNullOrEmpty(os))
-                {
-                    _userInterface.WriteLine("Error: Cannot specify -os when -all-platforms is specified.");
-                    return 1;
-                }
-
-                ContentDownloader.Config.DownloadAllArchs = HasParameter(args, "-all-archs");
-
-                var arch = GetParameter<string>(args, "-osarch");
-
-                if (ContentDownloader.Config.DownloadAllArchs && !string.IsNullOrEmpty(arch))
-                {
-                    _userInterface.WriteLine("Error: Cannot specify -osarch when -all-archs is specified.");
-                    return 1;
-                }
-
-                ContentDownloader.Config.DownloadAllLanguages = HasParameter(args, "-all-languages");
-                var language = GetParameter<string>(args, "-language");
-
-                if (ContentDownloader.Config.DownloadAllLanguages && !string.IsNullOrEmpty(language))
-                {
-                    _userInterface.WriteLine("Error: Cannot specify -language when -all-languages is specified.");
-                    return 1;
-                }
-
-                var lv = HasParameter(args, "-lowviolence");
-
-                var depotManifestIds = new List<(uint, ulong)>();
-                var isUgc = false;
-
-                var depotIdList = GetParameterList<uint>(args, "-depot");
-                var manifestIdList = GetParameterList<ulong>(args, "-manifest");
-                if (manifestIdList.Count > 0)
-                {
-                    if (depotIdList.Count != manifestIdList.Count)
-                    {
-                        _userInterface.WriteLine("Error: -manifest requires one id for every -depot specified");
-                        return 1;
-                    }
-
-                    var zippedDepotManifest =
-                        depotIdList.Zip(manifestIdList, (depotId, manifestId) => (depotId, manifestId));
-                    depotManifestIds.AddRange(zippedDepotManifest);
-                }
-                else
-                {
-                    depotManifestIds.AddRange(depotIdList.Select(depotId =>
-                        (depotId, INVALID_MANIFEST_ID: ContentDownloader.InvalidManifestId)));
-                }
-
-                PrintUnconsumedArgs(args);
-
-                if (InitializeSteam(username, password))
-                {
-                    try
-                    {
-                        await ContentDownloader
-                            .DownloadAppAsync(appId, depotManifestIds, branch, os, arch, language, lv, isUgc)
-                            .ConfigureAwait(false);
-                    }
-                    catch (Exception ex) when (
-                        ex is ContentDownloaderException
-                        || ex is OperationCanceledException)
-                    {
-                        _userInterface.WriteLine(ex.Message);
-                        return 1;
-                    }
-                    catch (Exception e)
-                    {
-                        _userInterface.WriteLine("Download failed to due to an unhandled exception: {0}", e.Message);
-                        throw;
-                    }
-                    finally
-                    {
-                        ContentDownloader.ShutdownSteam3();
-                    }
-                }
-                else
-                {
-                    _userInterface.WriteLine("Error: InitializeSteam failed");
-                    return 1;
-                }
-
-                #endregion
-            }
+                await client.DownloadAppAsync(options);
 
             return 0;
         }
-        finally
+        catch (ContentDownloaderException ex)
         {
-            // Dispose of the HTTP event listener to clean up event subscriptions
-            _httpEventListener?.Dispose();
+            _userInterface.WriteLine(ex.Message);
+            return 1;
+        }
+        catch (OperationCanceledException)
+        {
+            _userInterface.WriteLine("Download was cancelled.");
+            return 1;
+        }
+        catch (Exception e)
+        {
+            _userInterface.WriteLine("Download failed due to an unhandled exception: {0}", e.Message);
+            throw;
         }
     }
 
-    private static bool InitializeSteam(string username, string password)
+    private static async Task<DepotDownloadOptions> BuildDownloadOptionsAsync(string[] args, uint appId)
     {
-        if (!ContentDownloader.Config.UseQrCode)
+        var options = new DepotDownloadOptions
         {
-            if (username != null && password == null && (!ContentDownloader.Config.RememberPassword ||
-                                                         !AccountSettingsStore.Instance.LoginTokens.ContainsKey(
-                                                             username)))
-            {
-                if (AccountSettingsStore.Instance.LoginTokens.ContainsKey(username))
-                    _userInterface.WriteLine(
-                        $"Account \"{username}\" has stored credentials. Did you forget to specify -remember-password?");
+            AppId = appId,
+            DownloadManifestOnly = HasParameter(args, "-manifest-only"),
+            InstallDirectory = GetParameter<string>(args, "-dir"),
+            VerifyAll = HasParameter(args, "-verify-all") ||
+                        HasParameter(args, "-verify_all") ||
+                        HasParameter(args, "-validate"),
+            MaxDownloads = GetParameter(args, "-max-downloads", 8),
+            LoginId = HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null
+        };
 
-                do
-                {
-                    _userInterface.Write("Enter account password for \"{0}\": ", username);
-                    password = _userInterface.IsInputRedirected
-                        ? _userInterface.ReadLine()
-                        :
-                        // Avoid console echoing of password
-                        _userInterface.ReadPassword();
+        // Cell ID
+        var cellId = GetParameter(args, "-cellid", -1);
+        options.CellId = cellId == -1 ? 0 : cellId;
 
-                    _userInterface.WriteLine();
-                } while (string.Empty == password);
-            }
-            else if (username == null)
+        // Lancache detection
+        if (HasParameter(args, "-use-lancache"))
+        {
+            await SteamKit2.CDN.Client.DetectLancacheServerAsync();
+            if (SteamKit2.CDN.Client.UseLancacheServer)
             {
                 _userInterface.WriteLine(
-                    "No username given. Using anonymous account with dedicated server subscription.");
+                    "Detected Lancache server! Downloads will be directed through the Lancache.");
+
+                // Increase concurrent downloads for lancache
+                if (!HasParameter(args, "-max-downloads")) options.MaxDownloads = 25;
             }
         }
 
-        if (!string.IsNullOrEmpty(password))
+        // File list
+        var fileList = GetParameter<string>(args, "-filelist");
+        if (fileList != null)
         {
-            const int maxPasswordSize = 64;
+            const string regexPrefix = "regex:";
 
-            if (password.Length > maxPasswordSize)
-                _userInterface.WriteError(
-                    $"Warning: Password is longer than {maxPasswordSize} characters, which is not supported by Steam.");
+            try
+            {
+                options.FilesToDownload = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                options.FilesToDownloadRegex = [];
 
-            if (!password.All(char.IsAscii))
-                _userInterface.WriteError(
-                    "Warning: Password contains non-ASCII characters, which is not supported by Steam.");
+                var files = await File.ReadAllLinesAsync(fileList);
+
+                foreach (var fileEntry in files)
+                {
+                    if (string.IsNullOrWhiteSpace(fileEntry)) continue;
+
+                    if (fileEntry.StartsWith(regexPrefix))
+                    {
+                        var rgx = new Regex(fileEntry[regexPrefix.Length..],
+                            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+                        options.FilesToDownloadRegex.Add(rgx);
+                    }
+                    else
+                    {
+                        options.FilesToDownload.Add(fileEntry.Replace('\\', '/'));
+                    }
+                }
+
+                _userInterface.WriteLine("Using filelist: '{0}'.", fileList);
+            }
+            catch (Exception ex)
+            {
+                _userInterface.WriteLine("Warning: Unable to load filelist: {0}", ex);
+            }
         }
 
-        return ContentDownloader.InitializeSteam3(username, password);
+        // Branch options
+        var branch = GetParameter<string>(args, "-branch") ??
+                     GetParameter<string>(args, "-beta") ??
+                     ContentDownloader.DefaultBranch;
+        options.Branch = branch;
+        options.BranchPassword = GetParameter<string>(args, "-branchpassword") ??
+                                 GetParameter<string>(args, "-betapassword");
+
+        if (!string.IsNullOrEmpty(options.BranchPassword) && string.IsNullOrEmpty(branch))
+            throw new ArgumentException("Cannot specify -branchpassword when -branch is not specified.");
+
+        // Platform options
+        options.DownloadAllPlatforms = HasParameter(args, "-all-platforms");
+        options.Os = GetParameter<string>(args, "-os");
+
+        if (options.DownloadAllPlatforms && !string.IsNullOrEmpty(options.Os))
+            throw new ArgumentException("Cannot specify -os when -all-platforms is specified.");
+
+        // Architecture options
+        options.DownloadAllArchs = HasParameter(args, "-all-archs");
+        options.Architecture = GetParameter<string>(args, "-osarch");
+
+        if (options.DownloadAllArchs && !string.IsNullOrEmpty(options.Architecture))
+            throw new ArgumentException("Cannot specify -osarch when -all-archs is specified.");
+
+        // Language options
+        options.DownloadAllLanguages = HasParameter(args, "-all-languages");
+        options.Language = GetParameter<string>(args, "-language");
+
+        if (options.DownloadAllLanguages && !string.IsNullOrEmpty(options.Language))
+            throw new ArgumentException("Cannot specify -language when -all-languages is specified.");
+
+        // Low violence
+        options.LowViolence = HasParameter(args, "-lowviolence");
+
+        // Depot and manifest IDs
+        var depotIdList = GetParameterList<uint>(args, "-depot");
+        var manifestIdList = GetParameterList<ulong>(args, "-manifest");
+
+        if (manifestIdList.Count > 0)
+        {
+            if (depotIdList.Count != manifestIdList.Count)
+                throw new ArgumentException("-manifest requires one id for every -depot specified");
+
+            options.DepotManifestIds =
+                [.. depotIdList.Zip(manifestIdList, (depotId, manifestId) => (depotId, manifestId))];
+        }
+        else
+        {
+            options.DepotManifestIds =
+                [.. depotIdList.Select(depotId => (depotId, ContentDownloader.InvalidManifestId))];
+        }
+
+        return options;
     }
 
     private static int IndexOfParam(string[] args, string param)

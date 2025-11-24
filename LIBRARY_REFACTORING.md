@@ -2,14 +2,30 @@
 
 ## Overview
 
-The DepotDownloader codebase has been successfully refactored to support both **CLI usage** and **library consumption**. The core downloading logic is now accessible programmatically through a clean public API.
+The DepotDownloader codebase has been successfully refactored to support both **CLI usage** and **library consumption**. The core downloading logic is now accessible programmatically through a clean public API, and the CLI has been refactored to use this library interface.
+
+## Architecture
+
+### ✅ **Correct Architecture (After Refactoring)**
+
+```
+Program.cs (CLI - thin wrapper)
+    ↓ uses
+DepotDownloaderClient (public library API)
+    ↓ encapsulates
+ContentDownloader (internal static class)
+    ↓
+Steam3Session, CDNClientPool, etc.
+```
+
+The CLI is now a **consumer** of the library, not a duplicate implementation.
 
 ## New Public API
 
 ### Main Entry Point: `DepotDownloaderClient`
 
 ```csharp
-using DepotDownloader;
+using DepotDownloader.Lib;
 
 // Create client with custom UI or default (no output)
 using var client = new DepotDownloaderClient(new ConsoleUserInterface());
@@ -39,6 +55,50 @@ await client.DownloadPublishedFileAsync(appId: 730, publishedFileId: 1885082371)
 // Download UGC
 await client.DownloadUgcAsync(appId: 730, ugcId: 770604181014286929);
 ```
+
+## Refactored Files
+
+### **Program.cs** - ✅ Now Uses Library
+The CLI has been completely refactored to use `DepotDownloaderClient`:
+
+**Before (❌ Direct ContentDownloader calls):**
+```csharp
+// Initialize components manually
+Ansi.Initialize(_userInterface);
+AccountSettingsStore.Initialize(_userInterface);
+ContentDownloader.Initialize(_userInterface);
+
+// Direct authentication
+ContentDownloader.InitializeSteam3(username, password);
+
+// Direct download
+await ContentDownloader.DownloadAppAsync(...);
+
+// Manual cleanup
+ContentDownloader.ShutdownSteam3();
+```
+
+**After (✅ Using DepotDownloaderClient):**
+```csharp
+// Create client (handles initialization)
+using var client = new DepotDownloaderClient(_userInterface);
+
+// Use library API
+client.Login(username, password, rememberPassword);
+
+// Build options and download
+var options = await BuildDownloadOptionsAsync(args, appId);
+await client.DownloadAppAsync(options);
+
+// Automatic cleanup via Dispose()
+```
+
+**Key Changes:**
+- ✅ **Single initialization** - Only `DepotDownloaderClient` constructor
+- ✅ **Proper disposal** - `using` statement handles cleanup
+- ✅ **Type-safe options** - `DepotDownloadOptions` instead of CLI args
+- ✅ **Cleaner error handling** - Library exceptions propagate naturally
+- ✅ **Removed 350+ lines** of duplicate code
 
 ## New Files Created
 
@@ -78,11 +138,34 @@ await client.DownloadUgcAsync(appId: 730, ugcId: 770604181014286929);
 - Changed `ContentDownloaderException` from `internal` to **`public`**
 - Library consumers can now catch this specific exception type
 
-### **Program.cs**
-- Remains as the **CLI wrapper**
-- Parses command-line arguments
-- Could be refactored further to use `DepotDownloaderClient` directly
-- Currently still uses direct `ContentDownloader` calls (future enhancement)
+### **AccountSettingsStore.cs** & **DepotConfigStore.cs**
+- Fixed CA2211 warning (non-thread-safe static fields)
+- Implemented thread-safe singleton pattern with lock-based synchronization
+- Changed public static field to property with proper initialization checks
+
+### **Program.cs** ✅ **Major Refactoring**
+- Now uses `DepotDownloaderClient` exclusively
+- No more direct `ContentDownloader` calls
+- Proper separation of concerns:
+  - **CLI layer**: Argument parsing, user interaction
+  - **Library layer**: Download logic, Steam authentication
+- Removed duplicate initialization code
+- Simplified error handling
+- Automatic resource cleanup via `using` statement
+
+## CLI Functionality Unchanged
+
+The command-line interface works **exactly the same** as before:
+
+```bash
+# Still works!
+depotdownloader -app 730 -depot 731 -username myuser -password mypass
+
+# All parameters supported
+depotdownloader -app 730 -branch beta -dir C:\Games\CS2 -debug
+```
+
+**Zero breaking changes** for CLI users!
 
 ## Usage Examples
 
@@ -150,10 +233,20 @@ await client.DownloadAppAsync(options);
 
 ## Architecture Benefits
 
-### ✅ **Separation of Concerns**
-- CLI logic in `Program.cs`
-- Library logic in `ContentDownloader.cs` and related files
+### ✅ **Proper Separation of Concerns**
+- CLI logic in `Program.cs` (argument parsing only)
+- Library logic in `DepotDownloaderClient` and `ContentDownloader`
 - UI abstraction via `IUserInterface`
+
+### ✅ **Single Source of Truth**
+- CLI **uses** the library, doesn't duplicate it
+- No more parallel code paths
+- Easier to maintain and test
+
+### ✅ **Resource Management**
+- Single `using` statement handles all cleanup
+- No duplicate `Dispose()` calls
+- Proper `IDisposable` pattern
 
 ### ✅ **Testability**
 - Mock `IUserInterface` for unit tests
@@ -168,33 +261,45 @@ await client.DownloadAppAsync(options);
 ### ✅ **Backward Compatibility**
 - Existing CLI still works exactly the same
 - No breaking changes to command-line usage
-- Internal implementation unchanged
+- Internal implementation completely refactored
 
-## Future Enhancements
+## Code Quality Improvements
 
-### Potential Improvements:
-1. **Refactor Program.cs** to use `DepotDownloaderClient` directly
-2. **Add progress callbacks** to `IUserInterface` or `DepotDownloadOptions`
-3. **Add cancellation support** via `CancellationToken` parameter
-4. **Create separate projects**:
-   - `DepotDownloader.Library` (core library)
-   - `DepotDownloader.Cli` (CLI wrapper)
-5. **Add more overloads** for common scenarios
-6. **Add builder pattern** for fluent configuration
+### Fixed Code Analysis Warnings
 
-### Example Builder Pattern:
+**CA2211** - Non-thread-safe static fields (2 instances)
+- `AccountSettingsStore.Instance` and `DepotConfigStore.Instance`
+- Implemented lock-based thread-safe singleton pattern
+- Now throw `InvalidOperationException` if accessed before initialization
+
+**CA1822** - Mark members as static (1 instance)
+- `DepotDownloaderClient.ApplyConfiguration()` 
+- Suppressed with justification (part of instance API)
+
+## Breaking Changes
+
+### None! 
+The CLI functionality remains unchanged. All changes are additive:
+- New public classes: `DepotDownloaderClient`, `DepotDownloadOptions`, `NullUserInterface`
+- Changed visibility: `ContentDownloaderException` is now public
+- **Program.cs refactored internally** but CLI interface unchanged
+
+## Testing the Library
+
 ```csharp
-var client = new DepotDownloaderClientBuilder()
-    .WithUserInterface(new ConsoleUserInterface())
-    .WithDebugLogging()
-    .WithCredentials("username", "password", rememberPassword: true)
-    .Build();
-
-await client.DownloadAsync(builder => builder
-    .ForApp(730)
-    .FromBranch("public")
-    .ToDirectory(@"C:\Games\CS2")
-    .WithFileFilter("*.dll"));
+[Fact]
+public async Task DownloadApp_ValidAppId_Succeeds()
+{
+    var mockUi = new Mock<IUserInterface>();
+    using var client = new DepotDownloaderClient(mockUi.Object);
+    
+    client.LoginAnonymous();
+    
+    var options = new DepotDownloadOptions { AppId = 730 };
+    await client.DownloadAppAsync(options);
+    
+    mockUi.Verify(ui => ui.WriteLine(It.IsAny<string>()), Times.AtLeastOnce());
+}
 ```
 
 ## Migration Guide for External Consumers
@@ -215,35 +320,9 @@ await client.DownloadAppAsync(new DepotDownloadOptions
 });
 ```
 
-## Breaking Changes
-
-### None! 
-The CLI functionality remains unchanged. All changes are additive:
-- New public classes: `DepotDownloaderClient`, `DepotDownloadOptions`, `NullUserInterface`
-- Changed visibility: `ContentDownloaderException` is now public
-- Existing `Program.cs` CLI entry point unchanged
-
-## Testing the Library
-
-```csharp
-[Fact]
-public async Task DownloadApp_ValidAppId_Succeeds()
-{
-    var mockUi = new Mock<IUserInterface>();
-    using var client = new DepotDownloaderClient(mockUi.Object);
-    
-    client.LoginAnonymous();
-    
-    var options = new DepotDownloadOptions { AppId = 730 };
-    await client.DownloadAppAsync(options);
-    
-    mockUi.Verify(ui => ui.WriteLine(It.IsAny<string>()), Times.AtLeastOnce());
-}
-```
-
 ## Summary
 
-The refactoring successfully transforms DepotDownloader from a CLI-only tool into a **reusable library** while maintaining full backward compatibility. External consumers can now:
+The refactoring successfully transforms DepotDownloader from a CLI-only tool into a **reusable library with a clean CLI wrapper**. External consumers can now:
 
 - ✅ Use DepotDownloader programmatically in their own applications
 - ✅ Integrate with any UI framework (WPF, Avalonia, Blazor, etc.)
@@ -251,4 +330,20 @@ The refactoring successfully transforms DepotDownloader from a CLI-only tool int
 - ✅ Automate Steam content downloads in services/tools
 - ✅ Test download logic with mocked interfaces
 
-The existing CLI tool continues to work exactly as before with no changes required.
+The CLI tool continues to work exactly as before with no changes required, but now it's a **thin wrapper** around the library API instead of a parallel implementation.
+
+## Files Summary
+
+**Created:**
+- `NullUserInterface.cs` - Silent UI implementation
+- `DepotDownloadOptions.cs` - Type-safe configuration
+- `DepotDownloaderClient.cs` - Main library API
+- `LIBRARY_REFACTORING.md` - This documentation
+
+**Modified:**
+- `ContentDownloader.cs` - Made exception public
+- `AccountSettingsStore.cs` - Thread-safe singleton
+- `DepotConfigStore.cs` - Thread-safe singleton
+- `Program.cs` - **Completely refactored to use library**
+
+**Result:** Clean separation between library and CLI with zero breaking changes! 🎉
