@@ -26,10 +26,12 @@ namespace DepotDownloader
                 PrintVersion();
                 PrintUsage();
 
-                if (OperatingSystem.IsWindowsVersionAtLeast(5, 0))
-                {
-                    PlatformUtilities.VerifyConsoleLaunch();
-                }
+                
+                // TODO: Unused for library refactor.
+                //if (OperatingSystem.IsWindowsVersionAtLeast(5, 0))
+                //{
+                //    PlatformUtilities.VerifyConsoleLaunch();
+                //}
 
                 return 0;
             }
