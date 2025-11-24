@@ -13,6 +13,7 @@ internal class AccountSettingsStore
 {
     public static AccountSettingsStore Instance;
     private static readonly IsolatedStorageFile IsolatedStorage = IsolatedStorageFile.GetUserStoreForAssembly();
+    private static IUserInterface _userInterface;
 
     private string _fileName;
 
@@ -35,6 +36,11 @@ internal class AccountSettingsStore
 
     private static bool Loaded => Instance != null;
 
+    public static void Initialize(IUserInterface userInterface)
+    {
+        _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+    }
+
     public static void LoadFromFile(string filename)
     {
         if (Loaded)
@@ -49,7 +55,7 @@ internal class AccountSettingsStore
             }
             catch (IOException ex)
             {
-                Console.WriteLine("Failed to load account settings: {0}", ex.Message);
+                _userInterface?.WriteLine("Failed to load account settings: {0}", ex.Message);
                 Instance = new AccountSettingsStore();
             }
         else
@@ -71,7 +77,7 @@ internal class AccountSettingsStore
         }
         catch (IOException ex)
         {
-            Console.WriteLine("Failed to save account settings: {0}", ex.Message);
+            _userInterface?.WriteLine("Failed to save account settings: {0}", ex.Message);
         }
     }
 }

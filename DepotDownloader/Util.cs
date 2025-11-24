@@ -4,14 +4,19 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text;
-using QRCoder;
 using SteamKit2;
 
 namespace DepotDownloader;
 
 internal static class Util
 {
+    private static IUserInterface _userInterface;
+
+    public static void Initialize(IUserInterface userInterface)
+    {
+        _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+    }
+
     public static string GetSteamOs()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return "windows";
@@ -30,53 +35,6 @@ internal static class Util
     public static string GetSteamArch()
     {
         return Environment.Is64BitOperatingSystem ? "64" : "32";
-    }
-
-    public static string ReadPassword()
-    {
-        ConsoleKeyInfo keyInfo;
-        var password = new StringBuilder();
-
-        do
-        {
-            keyInfo = Console.ReadKey(true);
-
-            if (keyInfo.Key == ConsoleKey.Backspace)
-            {
-                if (password.Length > 0)
-                {
-                    password.Remove(password.Length - 1, 1);
-                    Console.Write("\b \b");
-                }
-
-                continue;
-            }
-
-            /* Printable ASCII characters only */
-            var c = keyInfo.KeyChar;
-            if (c is < ' ' or > '~') continue;
-
-            password.Append(c);
-            Console.Write('*');
-        } while (keyInfo.Key != ConsoleKey.Enter);
-
-        return password.ToString();
-    }
-
-    public static void DisplayQrCode(string challengeUrl)
-    {
-        // Generate QR code
-        using var qrGenerator = new QRCodeGenerator();
-        var qrCodeData = qrGenerator.CreateQrCode(challengeUrl, QRCodeGenerator.ECCLevel.L);
-
-        // Default to ASCII art in console
-        using var qrCode = new AsciiQRCode(qrCodeData);
-        var qrCodeAsAsciiArt = qrCode.GetLineByLineGraphic(1, drawQuietZones: true);
-
-        Console.WriteLine("Use the Steam Mobile App to sign in with this QR code:");
-        Console.WriteLine();
-
-        foreach (var line in qrCodeAsAsciiArt) Console.WriteLine(line);
     }
 
     // Validate a file against Steam3 Chunk data
@@ -144,7 +102,7 @@ internal static class Util
                 return DepotManifest.LoadFromFile(filename);
 
             if (badHashWarning)
-                Console.WriteLine("Manifest {0} on disk did not match the expected checksum.", manifestId);
+                _userInterface?.WriteLine("Manifest {0} on disk did not match the expected checksum.", manifestId);
         }
 
         // Try converting legacy manifest format.
@@ -171,7 +129,7 @@ internal static class Util
                 oldManifest = null;
 
                 if (badHashWarning)
-                    Console.WriteLine("Manifest {0} on disk did not match the expected checksum.", manifestId);
+                    _userInterface?.WriteLine("Manifest {0} on disk did not match the expected checksum.", manifestId);
             }
 
             if (oldManifest != null) return oldManifest.ConvertToSteamManifest(depotId);

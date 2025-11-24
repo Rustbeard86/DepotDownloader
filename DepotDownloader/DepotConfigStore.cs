@@ -10,6 +10,7 @@ namespace DepotDownloader;
 internal class DepotConfigStore
 {
     public static DepotConfigStore Instance;
+    private static IUserInterface _userInterface;
 
     private string _fileName;
 
@@ -21,6 +22,11 @@ internal class DepotConfigStore
     [ProtoMember(1)] public Dictionary<uint, ulong> InstalledManifestIDs { get; private set; }
 
     private static bool Loaded => Instance != null;
+
+    public static void Initialize(IUserInterface userInterface)
+    {
+        _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+    }
 
     public static void LoadFromFile(string filename)
     {
@@ -36,13 +42,13 @@ internal class DepotConfigStore
 
                 if (Instance == null)
                 {
-                    Console.WriteLine("Failed to load depot config: deserialization returned null");
+                    _userInterface?.WriteLine("Failed to load depot config: deserialization returned null");
                     Instance = new DepotConfigStore();
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine("Failed to load depot config: {0}", ex.Message);
+                _userInterface?.WriteLine("Failed to load depot config: {0}", ex.Message);
                 Instance = new DepotConfigStore();
             }
         else
@@ -64,7 +70,7 @@ internal class DepotConfigStore
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Failed to save depot config: {0}", ex.Message);
+            _userInterface?.WriteLine("Failed to save depot config: {0}", ex.Message);
         }
     }
 }

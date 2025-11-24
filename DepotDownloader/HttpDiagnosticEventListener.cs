@@ -4,9 +4,12 @@ using System.Text;
 
 namespace DepotDownloader;
 
-internal sealed class HttpDiagnosticEventListener : EventListener
+internal sealed class HttpDiagnosticEventListener(IUserInterface userInterface) : EventListener
 {
     private const EventKeywords TasksFlowActivityIds = (EventKeywords)0x80;
+
+    private readonly IUserInterface _userInterface =
+        userInterface ?? throw new ArgumentNullException(nameof(userInterface));
 
     protected override void OnEventSourceCreated(EventSource eventSource)
     {
@@ -32,6 +35,6 @@ internal sealed class HttpDiagnosticEventListener : EventListener
         }
 
         sb.Append(')');
-        Console.WriteLine(sb.ToString());
+        _userInterface.WriteLine(sb.ToString());
     }
 }

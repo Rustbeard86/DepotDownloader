@@ -2,7 +2,7 @@ using System;
 
 namespace DepotDownloader;
 
-internal static class Ansi
+public static class Ansi
 {
     // https://conemu.github.io/en/AnsiEscapeCodes.html#ConEmu_specific_OSC
     // https://learn.microsoft.com/en-us/windows/terminal/tutorials/progress-bar-sequences
@@ -19,10 +19,19 @@ internal static class Ansi
     private const char Bel = (char)0x07;
 
     private static bool _useProgress;
+    private static IUserInterface _userInterface;
+
+    public static void Initialize(IUserInterface userInterface)
+    {
+        _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+    }
 
     public static void Init()
     {
-        if (Console.IsInputRedirected || Console.IsOutputRedirected) return;
+        if (_userInterface == null)
+            throw new InvalidOperationException("Ansi must be initialized with IUserInterface before calling Init()");
+
+        if (_userInterface.IsInputRedirected || _userInterface.IsOutputRedirected) return;
 
         if (OperatingSystem.IsLinux()) return;
 
@@ -41,6 +50,6 @@ internal static class Ansi
     {
         if (!_useProgress) return;
 
-        Console.Write($"{Esc}]9;4;{(byte)state};{progress}{Bel}");
+        _userInterface?.Write($"{Esc}]9;4;{(byte)state};{progress}{Bel}");
     }
 }
