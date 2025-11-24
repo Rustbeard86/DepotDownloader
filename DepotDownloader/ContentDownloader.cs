@@ -19,7 +19,6 @@ internal static class ContentDownloader
 {
     // Constants for validation sentinel values
     public const uint InvalidAppId = uint.MaxValue;
-    public const uint InvalidDepotId = uint.MaxValue;
     public const ulong InvalidManifestId = ulong.MaxValue;
     public const string DefaultBranch = "public";
 
@@ -848,7 +847,7 @@ internal static class ContentDownloader
                 // Throw the cancellation exception if requested so that this task is marked failed
                 cts.Token.ThrowIfCancellationRequested();
 
-                Util.SaveManifestToFile(configDir, newManifest);
+                var manifestSaved = Util.SaveManifestToFile(configDir, newManifest);
             }
         }
 
