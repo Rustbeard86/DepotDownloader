@@ -488,6 +488,9 @@ internal class Steam3Session
                     {
                         var result = await _authSession.PollingWaitForResultAsync();
 
+                        // Close the QR code viewer now that authentication is complete
+                        Util.CloseQrViewer();
+
                         _logonDetails.Username = result.AccountName;
                         _logonDetails.Password = null;
                         _logonDetails.AccessToken = result.RefreshToken;
@@ -510,10 +513,14 @@ internal class Steam3Session
                     }
                     catch (TaskCanceledException)
                     {
+                        // Close QR viewer on cancellation
+                        Util.CloseQrViewer();
                         return;
                     }
                     catch (Exception ex)
                     {
+                        // Close QR viewer on error
+                        Util.CloseQrViewer();
                         await Console.Error.WriteLineAsync("Failed to authenticate with Steam: " + ex.Message);
                         Abort(false);
                         return;

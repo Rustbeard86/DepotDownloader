@@ -13,6 +13,9 @@ namespace DepotDownloader;
 
 internal static class Util
 {
+    private static Process _currentQrViewerProcess;
+    private static string _currentQrImagePath;
+
     public static string GetSteamOs()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return "windows";
@@ -66,6 +69,9 @@ internal static class Util
 
     public static void DisplayQrCode(string challengeUrl)
     {
+        // Close any existing QR viewer before displaying a new one
+        CloseQrViewer();
+
         // Generate QR code
         using var qrGenerator = new QRCodeGenerator();
         var qrCodeData = qrGenerator.CreateQrCode(challengeUrl, QRCodeGenerator.ECCLevel.L);
@@ -87,6 +93,35 @@ internal static class Util
         foreach (var line in qrCodeAsAsciiArt) Console.WriteLine(line);
     }
 
+    public static void CloseQrViewer()
+    {
+        // Close the viewer process if it exists and hasn't exited
+        if (_currentQrViewerProcess is { HasExited: false })
+            try
+            {
+                _currentQrViewerProcess.Kill();
+                _currentQrViewerProcess.Dispose();
+            }
+            catch
+            {
+                // Ignore errors if process already closed
+            }
+
+        // Clean up the temp image file
+        if (!string.IsNullOrEmpty(_currentQrImagePath) && File.Exists(_currentQrImagePath))
+            try
+            {
+                File.Delete(_currentQrImagePath);
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+
+        _currentQrViewerProcess = null;
+        _currentQrImagePath = null;
+    }
+
     private static bool TryDisplayQrCodeAsImage(QRCodeData qrCodeData)
     {
         try
@@ -98,12 +133,13 @@ internal static class Util
             // Save to temp file
             var tempPath = Path.Combine(Path.GetTempPath(), $"steam_qr_{Guid.NewGuid()}.png");
             File.WriteAllBytes(tempPath, qrCodeBytes);
+            _currentQrImagePath = tempPath;
 
             // Try to open with platform-specific command
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 // Windows: Use default image viewer
-                Process.Start(new ProcessStartInfo
+                _currentQrViewerProcess = Process.Start(new ProcessStartInfo
                 {
                     FileName = tempPath,
                     UseShellExecute = true
@@ -114,7 +150,7 @@ internal static class Util
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
                 // macOS: Use 'open' command
-                Process.Start("open", tempPath);
+                _currentQrViewerProcess = Process.Start("open", tempPath);
                 return true;
             }
 
@@ -125,7 +161,7 @@ internal static class Util
                 foreach (var viewer in viewers)
                     try
                     {
-                        Process.Start(viewer, tempPath);
+                        _currentQrViewerProcess = Process.Start(viewer, tempPath);
                         return true;
                     }
                     catch
@@ -144,6 +180,7 @@ internal static class Util
                 // Ignored - temp file cleanup is not critical
             }
 
+            _currentQrImagePath = null;
             return false;
         }
         catch
