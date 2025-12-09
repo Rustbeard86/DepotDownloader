@@ -37,7 +37,8 @@ internal static class DepotFileDownloader
 
         var files = depotFilesData.FilteredFiles.Where(f => !f.Flags.HasFlag(EDepotFileFlag.Directory)).ToArray();
         var networkChunkQueue =
-            new ConcurrentQueue<(FileStreamData fileStreamData, DepotManifest.FileData fileData, DepotManifest.ChunkData chunk)>();
+            new ConcurrentQueue<(FileStreamData fileStreamData, DepotManifest.FileData fileData, DepotManifest.ChunkData
+                chunk)>();
 
         var parallelOptions = new ParallelOptions
         {
