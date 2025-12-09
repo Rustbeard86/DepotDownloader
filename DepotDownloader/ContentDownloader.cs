@@ -880,14 +880,6 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
         return (new DepotDownloadInfo(depotId, containingAppId, manifestId, branch, installDir, depotKey), null);
     }
 
-    private async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
-    {
-        var (info, errorMessage) = await GetDepotInfoWithErrorAsync(depotId, appId, manifestId, branch);
-        if (info is null && errorMessage is not null) _userInterface?.WriteLine(errorMessage);
-
-        return info;
-    }
-
     private async Task<DepotFilesData> ProcessDepotManifestAndFiles(CancellationTokenSource cts,
         DepotDownloadInfo depot, GlobalDownloadCounter downloadCounter)
     {

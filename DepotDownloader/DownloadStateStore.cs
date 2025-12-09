@@ -29,20 +29,6 @@ internal sealed class DownloadStateStore
     }
 
     /// <summary>
-    ///     Gets the current download state.
-    /// </summary>
-    public DownloadState State
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _state;
-            }
-        }
-    }
-
-    /// <summary>
     ///     Loads existing state from disk, or creates new state.
     /// </summary>
     /// <param name="appId">The app ID being downloaded.</param>
@@ -189,19 +175,6 @@ internal sealed class DownloadStateStore
     }
 
     /// <summary>
-    ///     Gets the number of bytes already downloaded for a depot.
-    /// </summary>
-    public ulong GetDepotBytesDownloaded(uint depotId)
-    {
-        lock (_lock)
-        {
-            return _state.Depots.TryGetValue(depotId, out var depotState)
-                ? depotState.BytesDownloaded
-                : 0;
-        }
-    }
-
-    /// <summary>
     ///     Saves the current state to disk.
     /// </summary>
     public void Save()
@@ -243,15 +216,5 @@ internal sealed class DownloadStateStore
                 // Ignore delete errors
             }
         }
-    }
-
-    /// <summary>
-    ///     Checks if a state file exists for the given directory.
-    /// </summary>
-    public static bool StateFileExists(string installDirectory)
-    {
-        var configDir = Path.Combine(installDirectory, ".DepotDownloader");
-        var stateFilePath = Path.Combine(configDir, StateFileName);
-        return File.Exists(stateFilePath);
     }
 }
