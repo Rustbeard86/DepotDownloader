@@ -260,6 +260,7 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 | `-list-depots` | List all depots for the app and exit |
 | `-list-branches` | List all branches for the app and exit |
 | `-dry-run` | Show download plan without downloading |
+| `-verbose`, `-v` | Show detailed output (e.g., file list in dry-run) |
 
 #### Other
 
