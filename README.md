@@ -711,6 +711,36 @@ var options = DepotDownloadOptionsBuilder.Create()
     .Build();
 ```
 
+**Options Validation:**
+
+The builder validates options when `Build()` is called. You can also validate options directly:
+
+```csharp
+// Builder validates automatically
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .ForOs("windows")
+    .ForAllPlatforms()  // Throws: Cannot specify both ForOs and ForAllPlatforms
+    .Build();
+
+// Direct validation for manually created options
+var options = new DepotDownloadOptions
+{
+    AppId = 730,
+    DownloadAllPlatforms = true,
+    Os = "windows"  // Invalid combination
+};
+
+// Throws ArgumentException with details
+options.Validate();
+
+// Or check without throwing
+if (!options.TryValidate(out var errorMessage))
+{
+    Console.WriteLine($"Invalid options: {errorMessage}");
+}
+```
+
 **Full options reference:**
 
 ```csharp
