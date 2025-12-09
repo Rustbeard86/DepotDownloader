@@ -73,14 +73,11 @@ public interface IUserInterface
     ConsoleKeyInfo ReadKey(bool intercept);
 
     /// <summary>
-    ///     Updates a progress indicator.
+    ///     Updates a progress indicator with downloaded/total bytes.
     /// </summary>
+    /// <param name="downloaded">Bytes downloaded so far.</param>
+    /// <param name="total">Total bytes to download.</param>
     void UpdateProgress(ulong downloaded, ulong total);
-
-    /// <summary>
-    ///     Updates a progress indicator with a specific state.
-    /// </summary>
-    void UpdateProgress(Ansi.ProgressState state, byte progress = 0);
 
     /// <summary>
     ///     Displays a QR code for authentication.

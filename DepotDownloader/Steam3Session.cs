@@ -374,7 +374,7 @@ internal class Steam3Session
         _abortedToken.Cancel();
         SteamClient.Disconnect();
 
-        _userInterface.UpdateProgress(Ansi.ProgressState.Hidden);
+        _userInterface.UpdateProgress(1, 1); // Signal completion
 
         // flush callbacks until our disconnected event
         while (!_bDidDisconnect) _callbacks.RunWaitAllCallbacks(TimeSpan.FromMilliseconds(100));

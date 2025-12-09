@@ -24,14 +24,10 @@ public sealed class DepotDownloaderClient : IDisposable
         _userInterface = userInterface ?? new NullUserInterface();
 
         // Initialize all components
-        Ansi.Initialize(_userInterface);
         AccountSettingsStore.Initialize(_userInterface);
         DepotConfigStore.Initialize(_userInterface);
         ContentDownloader.Initialize(_userInterface);
         Util.Initialize(_userInterface);
-
-        // Initialize ANSI support
-        Ansi.Init();
 
         // Load account settings
         AccountSettingsStore.LoadFromFile("account.config");

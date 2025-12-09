@@ -92,12 +92,8 @@ public class ConsoleUserInterface : IUserInterface
 
     public void UpdateProgress(ulong downloaded, ulong total)
     {
-        Ansi.Progress(downloaded, total);
-    }
-
-    public void UpdateProgress(Ansi.ProgressState state, byte progress = 0)
-    {
-        Ansi.Progress(state, progress);
+        // Progress reporting is now handled by consumers who want to display it
+        // The default console implementation does nothing - progress is shown via WriteLine
     }
 
     public void DisplayQrCode(string challengeUrl)

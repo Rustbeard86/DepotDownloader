@@ -644,7 +644,7 @@ public static class ContentDownloader
 
     private static async Task DownloadSteam3Async(List<DepotDownloadInfo> depots)
     {
-        _userInterface?.UpdateProgress(Ansi.ProgressState.Indeterminate);
+        _userInterface?.UpdateProgress(0, 1); // Indeterminate start
 
         await _cdnPool.UpdateServerList();
 
@@ -685,7 +685,7 @@ public static class ContentDownloader
         foreach (var depotFileData in depotsToDownload)
             await DownloadSteam3AsyncDepotFiles(cts, downloadCounter, depotFileData, allFileNamesAllDepots);
 
-        _userInterface?.UpdateProgress(Ansi.ProgressState.Hidden);
+        _userInterface?.UpdateProgress(1, 1); // Complete
 
         _userInterface?.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
             downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);
@@ -1321,8 +1321,6 @@ public static class ContentDownloader
             {
                 downloadCounter.TotalBytesCompressed += chunk.CompressedLength;
                 downloadCounter.TotalBytesUncompressed += chunk.UncompressedLength;
-
-                Ansi.Progress(downloadCounter.TotalBytesUncompressed, downloadCounter.CompleteDownloadSize);
             }
 
             if (remainingChunks == 0)

@@ -61,10 +61,6 @@ public sealed class NullUserInterface : IUserInterface
     {
     }
 
-    public void UpdateProgress(Ansi.ProgressState state, byte progress = 0)
-    {
-    }
-
     public void DisplayQrCode(string challengeUrl)
     {
     }
