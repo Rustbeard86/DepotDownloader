@@ -1082,3 +1082,22 @@ await client.DownloadAppAsync(options);
 Note: Resume requires an install directory to be set. The download state is stored in a `.DepotDownloader` folder within the install directory.
 
 ### How do I check if I have enough disk space?
+
+```powershell
+# CLI - use dry-run to see total size
+./DepotDownloader -app 730 -dry-run
+```
+
+```csharp
+// Library - disk space is verified automatically before download
+// To get required space without downloading:
+var requiredSpace = await client.GetRequiredDiskSpaceAsync(options);
+Console.WriteLine($"Need {requiredSpace} bytes");
+
+// Disable automatic disk space check if needed:
+options.VerifyDiskSpace = false;
+```
+
+---
+
+## License
