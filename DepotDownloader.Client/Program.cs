@@ -79,6 +79,7 @@ internal class Program
         var listDepots = HasParameter(args, "-list-depots") || HasParameter(args, "--list-depots");
         var listBranches = HasParameter(args, "-list-branches") || HasParameter(args, "--list-branches");
         var dryRun = HasParameter(args, "-dry-run") || HasParameter(args, "--dry-run");
+        var verbose = HasParameter(args, "-verbose") || HasParameter(args, "-v");
 
         var pubFile = GetParameter(args, "-pubfile", ContentDownloader.InvalidManifestId);
         var ugcId = GetParameter(args, "-ugc", ContentDownloader.InvalidManifestId);
@@ -113,7 +114,7 @@ internal class Program
             return await ListBranchesAsync(client, appId);
 
         if (dryRun)
-            return await DryRunAsync(client, options);
+            return await DryRunAsync(client, options, verbose);
 
         // Perform download
         try
@@ -164,7 +165,7 @@ internal class Program
             var depots = await client.GetDepotsAsync(appId);
 
             _userInterface.WriteLine();
-            _userInterface.WriteLine("Depots for {0} ({1}):", appInfo.Name, appId);
+            _userInterface.WriteLine("Depots for {0} ({1}) [Type: {2}]:", appInfo.Name, appInfo.AppId, appInfo.Type);
             _userInterface.WriteLine();
 
             if (depots.Count == 0)
@@ -185,12 +186,13 @@ internal class Program
                 var lang = depot.Language ?? "-";
                 var size = depot.MaxSize.HasValue ? FormatSize(depot.MaxSize.Value) : "-";
                 var name = depot.Name ?? "(unnamed)";
+                var shared = depot.IsSharedInstall ? " [shared]" : "";
 
                 if (name.Length > 38)
                     name = name[..35] + "...";
 
-                _userInterface.WriteLine("  {0,-10} {1,-40} {2,-15} {3,-6} {4,-10} {5}",
-                    depot.DepotId, name, os, arch, lang, size);
+                _userInterface.WriteLine("  {0,-10} {1,-40} {2,-15} {3,-6} {4,-10} {5}{6}",
+                    depot.DepotId, name, os, arch, lang, size, shared);
             }
 
             _userInterface.WriteLine();
@@ -252,7 +254,7 @@ internal class Program
         }
     }
 
-    private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options)
+    private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options, bool verbose)
     {
         try
         {
@@ -276,6 +278,23 @@ internal class Program
                 _userInterface.WriteLine("  Depot {0} (Manifest {1})", depot.DepotId, depot.ManifestId);
                 _userInterface.WriteLine("    Files: {0}", depot.Files.Count);
                 _userInterface.WriteLine("    Size:  {0}", FormatSize(depot.TotalSize));
+
+                // Show file details in verbose mode
+                if (verbose && depot.Files.Count > 0)
+                {
+                    _userInterface.WriteLine();
+                    _userInterface.WriteLine("    Files:");
+                    foreach (var file in depot.Files.OrderBy(f => f.FileName).Take(50))
+                    {
+                        _userInterface.WriteLine("      {0,-60} {1,12} {2}",
+                            file.FileName.Length > 58 ? "..." + file.FileName[^55..] : file.FileName,
+                            FormatSize(file.Size),
+                            file.Hash[..8]);
+                    }
+                    if (depot.Files.Count > 50)
+                        _userInterface.WriteLine("      ... and {0} more files", depot.Files.Count - 50);
+                }
+
                 _userInterface.WriteLine();
             }
 
@@ -625,6 +644,7 @@ internal class Program
         _userInterface.WriteLine("  -list-depots             - list all depots for the specified app and exit.");
         _userInterface.WriteLine("  -list-branches           - list all branches for the specified app and exit.");
         _userInterface.WriteLine("  -dry-run                 - show what would be downloaded without downloading.");
+        _userInterface.WriteLine("  -verbose, -v             - show detailed output (e.g., file list in dry-run).");
         _userInterface.WriteLine();
         _userInterface.WriteLine("  -debug                   - enable verbose debug logging.");
         _userInterface.WriteLine("  -V or --version          - print version and runtime.");
