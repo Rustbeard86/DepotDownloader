@@ -10,13 +10,10 @@
 		<Copyright>Copyright © SteamRE Team 2025</Copyright>
 		<Deterministic>true</Deterministic>
 		<InvariantGlobalization>true</InvariantGlobalization>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.248">
-			<PrivateAssets>all</PrivateAssets>
-			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-		</PackageReference>
 		<PackageReference Include="protobuf-net" Version="3.2.56" />
 		<PackageReference Include="QRCoder" Version="1.7.0" />
 		<PackageReference Include="SteamKit2" Version="3.3.1" />

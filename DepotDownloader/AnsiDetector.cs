@@ -2,13 +2,19 @@ using System;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
-using Windows.Win32;
-using Windows.Win32.System.Console;
 
 namespace DepotDownloader.Lib;
 
 internal static partial class AnsiDetector
 {
+    // Console mode flags
+    private const uint ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
+    private const uint DISABLE_NEWLINE_AUTO_RETURN = 0x0008;
+
+    // Standard handles
+    private const int STD_OUTPUT_HANDLE = -11;
+    private const int STD_ERROR_HANDLE = -12;
+
     private static readonly Regex[] Regexes =
     [
         XtermRegex(), // xterm, PuTTY, Mintty
@@ -29,6 +35,17 @@ internal static partial class AnsiDetector
         st_256colorRegex(), // Suckless Simple Terminal, st
         AlacrittyRegex() // Alacritty
     ];
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial nint GetStdHandle(int nStdHandle);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetConsoleMode(nint hConsoleHandle, out uint lpMode);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool SetConsoleMode(nint hConsoleHandle, uint dwMode);
 
     public static (bool SupportsAnsi, bool LegacyConsole) Detect(bool stdError, bool upgrade)
     {
@@ -57,11 +74,9 @@ internal static partial class AnsiDetector
 
         try
         {
-            var @out = PInvoke.GetStdHandle_SafeHandle(stdError
-                ? STD_HANDLE.STD_ERROR_HANDLE
-                : STD_HANDLE.STD_OUTPUT_HANDLE);
+            var handle = GetStdHandle(stdError ? STD_ERROR_HANDLE : STD_OUTPUT_HANDLE);
 
-            if (!PInvoke.GetConsoleMode(@out, out var mode))
+            if (!GetConsoleMode(handle, out var mode))
             {
                 // Could not get console mode, try TERM (set in cygwin, WSL-Shell).
                 var (ansiFromTerm, legacyFromTerm) = DetectFromTerm();
@@ -70,14 +85,14 @@ internal static partial class AnsiDetector
                 return ansiFromTerm;
             }
 
-            if ((mode & CONSOLE_MODE.ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0) return true;
+            if ((mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0) return true;
             isLegacy = true;
 
             if (!upgrade) return false;
 
             // Try to enable ANSI support.
-            mode |= CONSOLE_MODE.ENABLE_VIRTUAL_TERMINAL_PROCESSING | CONSOLE_MODE.DISABLE_NEWLINE_AUTO_RETURN;
-            if (!PInvoke.SetConsoleMode(@out, mode))
+            mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
+            if (!SetConsoleMode(handle, mode))
                 // Enabling failed.
                 return false;
 
