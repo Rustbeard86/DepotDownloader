@@ -109,6 +109,18 @@ Download a specific depot:
 
 # Download from beta branch
 ./DepotDownloader -app 730 -branch beta -username myaccount
+
+# Limit download speed to 10 MB/s
+./DepotDownloader -app 730 -max-speed 10
+
+# Configure retry attempts (0 disables retries)
+./DepotDownloader -app 730 -retries 10
+
+# Stop on first depot failure (default: continue with other depots)
+./DepotDownloader -app 730 -fail-fast
+
+# Resume a previously interrupted download
+./DepotDownloader -app 730 -dir "C:\Games\CS2" -resume
 ```
 
 ### Download Workshop Items
@@ -146,8 +158,42 @@ Query app information without downloading:
 # List all branches for an app
 ./DepotDownloader -app 730 -list-branches
 
+# Get latest manifest ID for a depot
+./DepotDownloader -app 730 -depot 731 -get-manifest
+
+# Get manifest ID for a specific branch
+./DepotDownloader -app 730 -depot 731 -branch beta -get-manifest
+
+# Check required disk space before downloading
+./DepotDownloader -app 730 -check-space
+
 # Preview what would be downloaded (dry run)
 ./DepotDownloader -app 730 -dry-run
+
+# Verbose dry run with file list
+./DepotDownloader -app 730 -dry-run -verbose
+```
+
+**Example output for `-get-manifest`:**
+
+```
+Latest manifest for app 730, depot 731, branch 'public':
+  Manifest ID: 7617088375292372759
+
+To download this specific manifest:
+  depotdownloader -app 730 -depot 731 -manifest 7617088375292372759
+```
+
+**Example output for `-check-space`:**
+
+```
+Disk Space Check for app 730:
+  Target:     C:\Games\CS2
+  Drive:      C:\
+  Required:   15.1 GB
+  Available:  50.3 GB
+
+? Sufficient disk space available.
 ```
 
 **Example output for `-list-depots`:**
@@ -198,11 +244,45 @@ For scripting and automation, use `-json` to get structured JSON output:
 # Get branches as JSON
 ./DepotDownloader -app 730 -list-branches -json
 
+# Get latest manifest ID as JSON
+./DepotDownloader -app 730 -depot 731 -get-manifest -json
+
+# Check disk space as JSON
+./DepotDownloader -app 730 -check-space -json
+
 # Get download plan as JSON (with file details using -verbose)
 ./DepotDownloader -app 730 -dry-run -json -verbose
 
 # Download with JSON result
 ./DepotDownloader -app 730 -json
+```
+
+**Example JSON output for `-get-manifest -json`:**
+
+```json
+{
+  "success": true,
+  "appId": 730,
+  "depotId": 731,
+  "branch": "public",
+  "manifestId": 7617088375292372759,
+  "found": true
+}
+```
+
+**Example JSON output for `-check-space -json`:**
+
+```json
+{
+  "success": true,
+  "appId": 730,
+  "requiredBytes": 16234567890,
+  "requiredSize": "15.1 GB",
+  "availableBytes": 53687091200,
+  "availableSize": "50.0 GB",
+  "targetDrive": "C:\\",
+  "hasSufficientSpace": true
+}
 ```
 
 **Example JSON output for `-list-depots -json`:**
@@ -315,6 +395,9 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 | `-validate` | Verify checksums of existing files |
 | `-manifest-only` | Download manifest metadata only |
 | `-max-downloads <#>` | Concurrent downloads (default: 8) |
+| `-max-speed <#>` | Maximum download speed in MB/s |
+| `-retries <#>` | Maximum retry attempts per chunk (default: 5, use 0 to disable) |
+| `-fail-fast` | Stop immediately on first depot failure |
 | `-cellid <#>` | Override content server CellID |
 | `-use-lancache` | Route downloads through Lancache |
 | `-skip-disk-check` | Skip disk space verification before downloading |
@@ -326,6 +409,8 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 |-----------|-------------|
 | `-list-depots` | List all depots for the app and exit |
 | `-list-branches` | List all branches for the app and exit |
+| `-get-manifest` | Get the latest manifest ID for a depot (requires `-depot`) |
+| `-check-space` | Check required disk space without downloading |
 | `-dry-run` | Show download plan without downloading |
 | `-verbose`, `-v` | Show detailed output (e.g., file list in dry-run) |
 
@@ -348,6 +433,42 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 |-----------|-------------|
 | `-debug` | Enable verbose debug logging |
 | `-V`, `--version` | Print version information |
+
+---
+
+### Exit Codes
+
+The CLI returns different exit codes to indicate the result of the operation:
+
+| Exit Code | Meaning | Description |
+|-----------|---------|-------------|
+| `0` | Success | All operations completed successfully |
+| `1` | Failure | Operation failed (authentication, no depots downloaded, etc.) |
+| `2` | Partial Success | Some depots downloaded successfully, but others failed |
+
+**Examples:**
+
+```powershell
+# Check exit code in PowerShell
+./DepotDownloader -app 730 -depot 731 732
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "All depots downloaded successfully"
+} elseif ($LASTEXITCODE -eq 2) {
+    Write-Host "Some depots failed - check output for details"
+} else {
+    Write-Host "Download failed completely"
+}
+```
+
+```bash
+# Check exit code in Bash
+./DepotDownloader -app 730 -depot 731 732
+case $? in
+    0) echo "All depots downloaded successfully" ;;
+    2) echo "Some depots failed - check output for details" ;;
+    *) echo "Download failed completely" ;;
+esac
+```
 
 ---
 
@@ -669,9 +790,10 @@ await client.DownloadAppAsync(options);
 | `WithRetryPolicy(policy)` | Set retry policy for failed downloads |
 | `WithRetry(maxRetries, initialDelay, maxDelay)` | Configure custom retry behavior |
 | `WithNoRetry()` | Disable retries |
-| `WithMaxSpeed(bytesPerSecond)` | Set max download speed (bytes/sec) |
-| `WithMaxSpeedMbps(mbPerSecond)` | Set max download speed (MB/s) |
+| `WithMaxSpeed(bytesPerSecond)` | Set max download speed in MB/s |
+| `WithMaxSpeedMbps(mbPerSecond)` | Set max download speed in MB/s |
 | `WithResume(enable)` | Enable resume support for interrupted downloads |
+| `WithFailFast(enable)` | Stop on first depot failure (default: continue) |
 | `Build()` | Create the options (throws if AppId not set) |
 
 **Retry Policy:**
@@ -709,6 +831,27 @@ var options = DepotDownloadOptionsBuilder.Create()
 // If download is interrupted (cancelled, crashed, network error),
 // run again with the same options to continue where it left off
 await client.DownloadAppAsync(options);
+```
+
+**Fail-Fast Mode:**
+```csharp
+// Stop immediately on first depot failure
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .WithFailFast()
+    .Build();
+
+// Default behavior: continue downloading other depots even if one fails
+// The result will indicate which depots succeeded/failed
+var result = await client.DownloadAppAsync(options);
+if (result.FailedDepots > 0)
+{
+    Console.WriteLine($"{result.FailedDepots} depot(s) failed:");
+    foreach (var failure in result.Failures)
+    {
+        Console.WriteLine($"  Depot {failure.DepotId}: {failure.ErrorMessage}");
+    }
+}
 ```
 
 **Speed Limiting:**
@@ -892,7 +1035,20 @@ using var client = new DepotDownloaderClient(); // NullUserInterface is default
 ```csharp
 try
 {
-    await client.DownloadAppAsync(options);
+    var result = await client.DownloadAppAsync(options);
+    
+    // Check for partial failures
+    if (result.PartialSuccess)
+    {
+        Console.WriteLine($"Downloaded {result.SuccessfulDepots}/{result.DepotResults.Count} depots");
+        foreach (var failure in result.Failures)
+        {
+            Console.WriteLine($"Failed: Depot {failure.DepotId} - {failure.ErrorMessage}");
+        }
+        
+        Console.WriteLine($"Successfully downloaded {result.SuccessfulDepots} depot(s)");
+        Console.WriteLine($"Total downloaded: {result.TotalBytesDownloaded} bytes");
+    }
 }
 catch (InsufficientDiskSpaceException ex)
 {
@@ -917,174 +1073,46 @@ catch (OperationCanceledException)
 }
 ```
 
-### Disk Space Verification
+**Download Result Details:**
 
-By default, `DownloadAppAsync` checks disk space before downloading and throws `InsufficientDiskSpaceException` if there isn't enough space. You can disable this:
+The `DownloadResult` object returned by `DownloadAppAsync` provides detailed information about the download:
 
 ```csharp
-var options = new DepotDownloadOptions
+public class DownloadResult
 {
-    AppId = 730,
-    InstallDirectory = @"C:\Games\CS2",
-    VerifyDiskSpace = false  // Skip automatic disk space check
-};
+    public uint AppId { get; set; }
+    public int SuccessfulDepots { get; }      // Number of depots that downloaded successfully
+    public int FailedDepots { get; }          // Number of depots that failed
+    public bool AllSucceeded { get; }         // True if all depots succeeded
+    public bool AllFailed { get; }            // True if all depots failed
+    public bool PartialSuccess { get; }       // True if some succeeded and some failed
+    
+    public ulong TotalBytesDownloaded { get; set; }
+    public ulong TotalBytesCompressed { get; set; }
+    public int TotalFilesDownloaded { get; set; }
+    
+    public List<DepotDownloadResult> Successes { get; }  // Details of successful depots
+    public List<DepotDownloadResult> Failures { get; }   // Details of failed depots
+}
 ```
 
-### Debug Logging
+Each `DepotDownloadResult` contains:
+- `DepotId` - The depot ID
+- `ManifestId` - The manifest ID downloaded
+- `Success` - Whether the download succeeded
+- `ErrorMessage` - Error message if failed
+- `BytesDownloaded` - Bytes downloaded for this depot
+- `FilesDownloaded` - Files downloaded for this depot
 
-The library supports `Microsoft.Extensions.Logging` for diagnostic output:
-
-```csharp
-using Microsoft.Extensions.Logging;
-
-// With a logger factory (e.g., from DI)
-var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
-var logger = loggerFactory.CreateLogger<DepotDownloaderClient>();
-
-using var client = new DepotDownloaderClient(myUserInterface, logger);
-
-// Or enable SteamKit2 debug logging
-client.EnableDebugLogging();
-
-// Debug output goes to IUserInterface.WriteDebug()
-```
-
----
-
-## API Reference
-
-### DepotDownloaderClient
-
-| Member | Description |
-|--------|-------------|
-| `DepotDownloaderClient(IUserInterface, ILogger)` | Creates a new client instance with optional logger |
-| `DownloadProgress` | Event raised when download progress changes |
-| `Login(username, password, rememberPassword, skipAppConfirmation)` | Authenticate with credentials |
-| `LoginAnonymous(skipAppConfirmation)` | Anonymous authentication |
-| `LoginWithQrCode(rememberPassword, skipAppConfirmation)` | QR code authentication |
-| `GetAppInfoAsync(appId)` | Get app name and type |
-| `GetDepotsAsync(appId)` | List all depots for an app |
-| `GetBranchesAsync(appId)` | List all branches for an app |
-| `GetLatestManifestIdAsync(appId, depotId, branch, password)` | Get latest manifest ID for a depot |
-| `GetDownloadPlanAsync(options)` | Get download plan without downloading |
-| `GetRequiredDiskSpaceAsync(options)` | Get required download size in bytes |
-| `DownloadAppAsync(DepotDownloadOptions)` | Download app content |
-| `DownloadPublishedFileAsync(appId, publishedFileId)` | Download workshop item |
-| `DownloadUgcAsync(appId, ugcId)` | Download UGC content |
-| `Logout()` | Disconnect from Steam and clear cached data |
-| `EnableDebugLogging()` | Enable verbose logging |
-| `Dispose()` | Clean up resources |
-
-### Query Result Types
-
-| Type | Description |
-|------|-------------|
-| `AppInfo` | App ID, name, and type |
-| `DepotInfo` | Depot ID, name, OS, architecture, language, size |
-| `BranchInfo` | Branch name, build ID, update time, password protection |
-| `DownloadPlan` | List of depots with files and total size |
-| `DiskSpaceCheckResult` | Required/available space and sufficiency check |
-| `DownloadProgressEventArgs` | Progress info: bytes, files, speed, ETA |
-
-### DepotDownloadOptions
-
-See [Download Options](#download-options) section for complete property documentation.
-
-### IUserInterface
-
-Interface for customizing user interaction. See [Custom User Interface](#custom-user-interface) for implementation details.
-
-### ContentDownloaderException
-
-Exception thrown for Steam/download-specific errors. Contains a descriptive error message.
-
----
-
-## FAQ
-
-### Why am I prompted for a 2-factor code every time?
-
-Use `-remember-password` (CLI) or `rememberPassword: true` (library) to persist your session credentials.
-
-### Can I run multiple instances simultaneously?
-
-Yes, but each instance needs a unique LoginID to avoid disconnecting other sessions:
-
-```powershell
-# CLI
-./DepotDownloader -app 730 -loginid 12345
-```
-
-```csharp
-// Library
-options.LoginId = 12345;
-```
-
-### Why can't I download certain games anonymously?
-
-Anonymous accounts have limited access. View available games at [SteamDB Sub 17906](https://steamdb.info/sub/17906/). For other games, authenticate with a Steam account that owns the game.
-
-### Password with special characters doesn't work?
-
-Use interactive password input instead of `-password`:
-
-```powershell
-./DepotDownloader -app 730 -username myaccount
-# Password will be prompted securely
-```
-
-### Error 401 or "no manifest code returned"?
-
-This typically means:
-1. Try logging in with a Steam account (not anonymous)
-2. The developer has blocked downloading old manifests
-3. The manifest ID is invalid
-
-### Slow download speeds?
-
-Try increasing concurrent downloads:
-
-```powershell
-# CLI
-./DepotDownloader -app 730 -max-downloads 16
-```
-
-```csharp
-// Library
-options.MaxDownloads = 16;
-```
-
-### Using with Lancache?
-
-```powershell
-# CLI - auto-detects and increases parallelism
-./DepotDownloader -app 730 -use-lancache
-```
-
-### How do I resume an interrupted download?
-
-```powershell
-# CLI - use -resume flag
-./DepotDownloader -app 730 -dir "C:\Games\CS2" -resume
-```
-
-```csharp
-// Library - enable resume in options
-var options = new DepotDownloadOptions
-{
-    AppId = 730,
-    InstallDirectory = @"C:\Games\CS2",
-    Resume = true
-};
-await client.DownloadAppAsync(options);
-```
-
-Note: Resume requires an install directory to be set. The download state is stored in a `.DepotDownloader` folder within the install directory.
+### FAQ
 
 ### How do I check if I have enough disk space?
 
 ```powershell
-# CLI - use dry-run to see total size
+# CLI - use check-space command
+./DepotDownloader -app 730 -check-space
+
+# Or use dry-run to see total size
 ./DepotDownloader -app 730 -dry-run
 ```
 
@@ -1094,8 +1122,74 @@ Note: Resume requires an install directory to be set. The download state is stor
 var requiredSpace = await client.GetRequiredDiskSpaceAsync(options);
 Console.WriteLine($"Need {requiredSpace} bytes");
 
-// Disable automatic disk space check if needed:
-options.VerifyDiskSpace = false;
+```
+
+### What happens if a depot download fails?
+
+By default, DepotDownloader continues downloading other depots even if one fails. You'll get a summary at the end:
+
+```powershell
+# CLI - download multiple depots with failure handling
+./DepotDownloader -app 730
+
+# If depot 731 fails, depot 732 will still be attempted
+# Exit code: 0 = all succeeded, 1 = all failed, 2 = partial success
+```
+
+```csharp
+// Library - check the result for failures
+var result = await client.DownloadAppAsync(options);
+
+if (result.PartialSuccess)
+{
+    Console.WriteLine($"Downloaded {result.SuccessfulDepots}/{result.DepotResults.Count} depots");
+    foreach (var failure in result.Failures)
+    {
+        Console.WriteLine($"Failed: Depot {failure.DepotId} - {failure.ErrorMessage}");
+    }
+}
+
+// Use FailFast = true to stop on first failure
+options.FailFast = true;
+```
+
+### How do I limit download speed?
+
+```powershell
+# CLI - limit to 10 MB/s
+./DepotDownloader -app 730 -max-speed 10
+```
+
+```csharp
+// Library - limit to 10 MB/s
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .WithMaxSpeedMbps(10)
+    .Build();
+```
+
+### How do I get a specific manifest ID?
+
+```powershell
+# CLI - get latest manifest for a depot
+./DepotDownloader -app 730 -depot 731 -get-manifest
+
+# Get manifest from a specific branch
+./DepotDownloader -app 730 -depot 731 -branch beta -get-manifest
+```
+
+```csharp
+// Library
+var manifestId = await client.GetLatestManifestIdAsync(
+    appId: 730,
+    depotId: 731,
+    branch: "public"
+);
+
+if (manifestId.HasValue)
+{
+    Console.WriteLine($"Latest manifest: {manifestId.Value}");
+}
 ```
 
 ---
