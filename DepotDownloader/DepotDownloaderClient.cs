@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -12,6 +13,8 @@ namespace DepotDownloader.Lib;
 /// <summary>
 ///     Main client for downloading Steam depot content programmatically.
 /// </summary>
+[SuppressMessage("CodeQuality", "IDE0051:Remove unused private members",
+    Justification = "Public API methods are used by library consumers")]
 public sealed class DepotDownloaderClient : IDisposable
 {
     private readonly ContentDownloader _downloader;

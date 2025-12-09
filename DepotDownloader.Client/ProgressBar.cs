@@ -1,10 +1,12 @@
 ﻿using System;
+using System.Diagnostics.CodeAnalysis;
 
 namespace DepotDownloader.Client;
 
 /// <summary>
 ///     ANSI-based progress bar for console display.
 /// </summary>
+[SuppressMessage("Performance", "CA1822:Mark members as static")]
 internal sealed class ProgressBar(int barWidth = ProgressBar.DefaultBarWidth)
 {
     private const int DefaultBarWidth = 40;
@@ -65,6 +67,8 @@ internal sealed class ProgressBar(int barWidth = ProgressBar.DefaultBarWidth)
     /// <summary>
     ///     Clears the progress bar line.
     /// </summary>
+    [SuppressMessage("CodeQuality", "IDE0051:Remove unused private members",
+        Justification = "Public API for consumers")]
     public void Clear()
     {
         if (!_useAnsi || _lastLineLength == 0)
@@ -80,7 +84,7 @@ internal sealed class ProgressBar(int barWidth = ProgressBar.DefaultBarWidth)
         // Windows 10+ supports it via Virtual Terminal Processing
         try
         {
-            // Simple check - if TERM is set or we're on a Unix-like system
+            // Simple check - if TERM is set, or we're on a Unix-like system
             var term = Environment.GetEnvironmentVariable("TERM");
             if (!string.IsNullOrEmpty(term))
                 return true;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using System.Threading;
 
@@ -8,6 +9,10 @@ namespace DepotDownloader.Lib;
 /// <summary>
 ///     Fluent builder for creating <see cref="DepotDownloadOptions" /> instances.
 /// </summary>
+[SuppressMessage("CodeQuality", "IDE0051:Remove unused private members",
+    Justification = "Public API for library consumers - methods are used externally")]
+[SuppressMessage("Performance", "CA1822:Mark members as static",
+    Justification = "Builder pattern requires instance methods for fluent chaining")]
 public sealed class DepotDownloadOptionsBuilder
 {
     private readonly List<(uint depotId, ulong manifestId)> _depotManifestIds = [];
@@ -355,7 +360,7 @@ public sealed class DepotDownloadOptionsBuilder
     public DepotDownloadOptions Build()
     {
         if (_appId == SteamConstants.InvalidAppId)
-            throw new System.ArgumentException("AppId must be specified. Use ForApp() to set it.");
+            throw new ArgumentException("AppId must be specified. Use ForApp() to set it.");
 
         return new DepotDownloadOptions
         {

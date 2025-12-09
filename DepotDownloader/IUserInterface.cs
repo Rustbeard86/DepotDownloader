@@ -1,10 +1,13 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 
 namespace DepotDownloader.Lib;
 
 /// <summary>
 ///     Abstraction for user interaction, allowing the library to be decoupled from Console.
 /// </summary>
+[SuppressMessage("Design", "CA1030:Use events where appropriate",
+    Justification = "Interface methods are callbacks, not events")]
 public interface IUserInterface
 {
     /// <summary>
@@ -15,6 +18,8 @@ public interface IUserInterface
     /// <summary>
     ///     Gets whether output is redirected.
     /// </summary>
+    [SuppressMessage("CodeQuality", "IDE0051:Remove unused private members",
+        Justification = "Public API for implementers")]
     bool IsOutputRedirected { get; }
 
     /// <summary>
@@ -55,6 +60,8 @@ public interface IUserInterface
     /// <summary>
     ///     Writes a formatted error message to the error output.
     /// </summary>
+    [SuppressMessage("CodeQuality", "IDE0079:Remove unnecessary suppression",
+        Justification = "Used by implementations")]
     void WriteError(string format, params object[] args);
 
     /// <summary>
@@ -70,6 +77,8 @@ public interface IUserInterface
     /// <summary>
     ///     Reads a single key press from the input.
     /// </summary>
+    [SuppressMessage("CodeQuality", "IDE0051:Remove unused private members",
+        Justification = "Public API for implementers")]
     ConsoleKeyInfo ReadKey(bool intercept);
 
     /// <summary>
@@ -77,6 +86,8 @@ public interface IUserInterface
     /// </summary>
     /// <param name="downloaded">Bytes downloaded so far.</param>
     /// <param name="total">Total bytes to download.</param>
+    [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+        Justification = "Parameters are for implementers to use")]
     void UpdateProgress(ulong downloaded, ulong total);
 
     /// <summary>

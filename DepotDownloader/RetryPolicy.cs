@@ -20,6 +20,7 @@ public sealed class RetryPolicy
     /// <summary>
     ///     Aggressive retry policy for unreliable connections.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("CodeQuality", "IDE0051:Remove unused private members")]
     public static RetryPolicy Aggressive { get; } = new()
     {
         MaxRetries = 10,
@@ -31,7 +32,7 @@ public sealed class RetryPolicy
     /// <summary>
     ///     Maximum number of retry attempts per chunk. Default is 5.
     /// </summary>
-    public int MaxRetries { get; init; } = 5;
+    public int MaxRetries { get; private init; } = 5;
 
     // Internal configuration - used by GetDelay()
     private TimeSpan InitialDelayValue { get; init; } = TimeSpan.FromSeconds(1);

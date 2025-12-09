@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 namespace DepotDownloader.Lib;
 
@@ -97,6 +98,8 @@ public record DiskSpaceCheckResult(
 /// <summary>
 ///     Event arguments for download progress updates.
 /// </summary>
+[SuppressMessage("CodeQuality", "IDE0051:Remove unused private members",
+    Justification = "Public API for library consumers")]
 public class DownloadProgressEventArgs : EventArgs
 {
     /// <summary>
