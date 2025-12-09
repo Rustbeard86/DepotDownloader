@@ -6,12 +6,14 @@
 		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
 		<RollForward>LatestMajor</RollForward>
 		<Version>3.4.0</Version>
-		<Description>Steam Downloading Utility</Description>
-		<Authors>SteamRE Team</Authors>
-		<Copyright>Copyright © SteamRE Team 2025</Copyright>
+		<Description>Steam depot downloading CLI. Fork of SteamRE/DepotDownloader.</Description>
+		<Authors>Rustbeard86</Authors>
+		<Copyright>Copyright © Rustbeard86 2025. Based on work by SteamRE Team.</Copyright>
 		<ApplicationIcon>..\Icon\DepotDownloader.ico</ApplicationIcon>
 		<Deterministic>true</Deterministic>
 		<InvariantGlobalization>true</InvariantGlobalization>
+		<RepositoryUrl>https://github.com/Rustbeard86/DepotDownloader</RepositoryUrl>
+		<PackageLicenseExpression>GPL-2.0-only</PackageLicenseExpression>
 	</PropertyGroup>
 
 	<ItemGroup>
