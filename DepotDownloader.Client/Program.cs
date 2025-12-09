@@ -96,21 +96,25 @@ internal class Program
         // Check for query-only commands
         var listDepots = HasParameter(args, "-list-depots") || HasParameter(args, "--list-depots");
         var listBranches = HasParameter(args, "-list-branches") || HasParameter(args, "--list-branches");
+        var getManifest = HasParameter(args, "-get-manifest") || HasParameter(args, "--get-manifest");
+        var checkSpace = HasParameter(args, "-check-space") || HasParameter(args, "--check-space");
         var dryRun = HasParameter(args, "-dry-run") || HasParameter(args, "--dry-run");
         var verbose = HasParameter(args, "-verbose") || HasParameter(args, "-v");
         var jsonOutput = HasParameter(args, "-json") || HasParameter(args, "--json");
         var noProgress = HasParameter(args, "-no-progress") || HasParameter(args, "--no-progress");
         var resume = HasParameter(args, "-resume") || HasParameter(args, "--resume");
+        var failFast = HasParameter(args, "-fail-fast") || HasParameter(args, "--fail-fast");
 
         var pubFile = GetParameter(args, "-pubfile", SteamConstants.InvalidManifestId);
         var ugcId = GetParameter(args, "-ugc", SteamConstants.InvalidManifestId);
 
         // Build download options (unless this is a query-only command)
         DepotDownloadOptions options = null;
-        if (!listDepots && !listBranches)
+        if (!listDepots && !listBranches && !getManifest)
         {
             options = await BuildDownloadOptionsAsync(args, appId);
             options.Resume = resume;
+            options.FailFast = failFast;
         }
 
         PrintUnconsumedArgs(args);
@@ -139,6 +143,17 @@ internal class Program
 
         if (listBranches)
             return await ListBranchesAsync(client, appId, jsonOutput);
+
+        if (getManifest)
+        {
+            var depotId = GetParameter<uint>(args, "-depot");
+            var branch = GetParameter<string>(args, "-branch") ?? SteamConstants.DefaultBranch;
+            var branchPassword = GetParameter<string>(args, "-branchpassword");
+            return await GetManifestAsync(client, appId, depotId, branch, branchPassword, jsonOutput);
+        }
+
+        if (checkSpace)
+            return await CheckSpaceAsync(client, options, jsonOutput);
 
         if (dryRun)
             return await DryRunAsync(client, options, verbose, jsonOutput);
@@ -403,6 +418,140 @@ internal class Program
         }
     }
 
+    private static async Task<int> GetManifestAsync(DepotDownloaderClient client, uint appId, uint depotId,
+        string branch, string branchPassword, bool jsonOutput)
+    {
+        try
+        {
+            if (depotId == 0)
+            {
+                if (jsonOutput)
+                    WriteJsonError("Depot ID must be specified with -depot when using -get-manifest");
+                else
+                    _userInterface.WriteError("Error: -depot must be specified when using -get-manifest");
+                return 1;
+            }
+
+            var manifestId = await client.GetLatestManifestIdAsync(appId, depotId, branch, branchPassword);
+
+            if (jsonOutput)
+            {
+                JsonOutput.WriteManifest(new ManifestResultJson
+                {
+                    AppId = appId,
+                    DepotId = depotId,
+                    Branch = branch,
+                    ManifestId = manifestId,
+                    Found = manifestId.HasValue
+                });
+                return manifestId.HasValue ? 0 : 1;
+            }
+
+            if (manifestId.HasValue)
+            {
+                _userInterface.WriteLine();
+                _userInterface.WriteLine("Latest manifest for app {0}, depot {1}, branch '{2}':",
+                    appId, depotId, branch);
+                _userInterface.WriteLine("  Manifest ID: {0}", manifestId.Value);
+                _userInterface.WriteLine();
+                _userInterface.WriteLine("To download this specific manifest:");
+                _userInterface.WriteLine("  depotdownloader -app {0} -depot {1} -manifest {2}",
+                    appId, depotId, manifestId.Value);
+            }
+            else
+            {
+                _userInterface.WriteError("No manifest found for app {0}, depot {1}, branch '{2}'",
+                    appId, depotId, branch);
+                _userInterface.WriteError("This could mean:");
+                _userInterface.WriteError("  - The depot doesn't exist");
+                _userInterface.WriteError("  - The branch doesn't exist or requires a password");
+                _userInterface.WriteError("  - Your account doesn't have access to this depot");
+            }
+
+            return manifestId.HasValue ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            if (jsonOutput)
+                WriteJsonError($"Error getting manifest: {ex.Message}");
+            else
+                _userInterface.WriteError("Error getting manifest: {0}", ex.Message);
+            return 1;
+        }
+    }
+
+    private static async Task<int> CheckSpaceAsync(DepotDownloaderClient client, DepotDownloadOptions options,
+        bool jsonOutput)
+    {
+        try
+        {
+            if (!jsonOutput)
+            {
+                _userInterface.WriteLine();
+                _userInterface.WriteLine("Checking required disk space...");
+            }
+
+            var requiredBytes = await client.GetRequiredDiskSpaceAsync(options);
+            var targetPath = options.InstallDirectory ?? Environment.CurrentDirectory;
+            var fullPath = Path.GetFullPath(targetPath);
+            var root = Path.GetPathRoot(fullPath) ?? fullPath;
+
+            ulong availableBytes = 0;
+            try
+            {
+                var driveInfo = new DriveInfo(root);
+                availableBytes = (ulong)driveInfo.AvailableFreeSpace;
+            }
+            catch
+            {
+                // Ignore drive info errors
+            }
+
+            var hasSufficientSpace = availableBytes >= requiredBytes;
+
+            if (jsonOutput)
+            {
+                JsonOutput.WriteSpaceCheck(new SpaceCheckResultJson
+                {
+                    AppId = options.AppId,
+                    RequiredBytes = requiredBytes,
+                    RequiredSize = FormatSize(requiredBytes),
+                    AvailableBytes = availableBytes,
+                    AvailableSize = FormatSize(availableBytes),
+                    TargetDrive = root,
+                    HasSufficientSpace = hasSufficientSpace
+                });
+                return hasSufficientSpace ? 0 : 1;
+            }
+
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("Disk Space Check for app {0}:", options.AppId);
+            _userInterface.WriteLine("  Target:     {0}", fullPath);
+            _userInterface.WriteLine("  Drive:      {0}", root);
+            _userInterface.WriteLine("  Required:   {0}", FormatSize(requiredBytes));
+            _userInterface.WriteLine("  Available:  {0}", FormatSize(availableBytes));
+            _userInterface.WriteLine();
+
+            if (hasSufficientSpace)
+            {
+                _userInterface.WriteLine("✓ Sufficient disk space available.");
+                return 0;
+            }
+
+            _userInterface.WriteError("✗ Insufficient disk space!");
+            _userInterface.WriteError("  Shortfall: {0}", FormatSize(requiredBytes - availableBytes));
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            if (jsonOutput)
+                WriteJsonError($"Error checking disk space: {ex.Message}");
+            else
+                _userInterface.WriteError("Error checking disk space: {0}", ex.Message);
+            return 1;
+        }
+    }
+
     private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options, bool verbose,
         bool jsonOutput)
     {
@@ -574,6 +723,22 @@ internal class Program
                               !HasParameter(args, "--skip-disk-check") &&
                               !(_config?.SkipDiskCheck ?? false)
         };
+
+        // Speed limiting
+        var maxSpeedMbps = GetParameter<double?>(args, "-max-speed");
+        if (maxSpeedMbps.HasValue)
+        {
+            options.MaxBytesPerSecond = (long)(maxSpeedMbps.Value * 1024 * 1024);
+            _userInterface.WriteLine("Speed limit: {0:F1} MB/s", maxSpeedMbps.Value);
+        }
+
+        // Retry configuration
+        var maxRetries = GetParameter(args, "-retries", -1);
+        if (maxRetries >= 0)
+        {
+            options.RetryPolicy = maxRetries == 0 ? RetryPolicy.None : RetryPolicy.Create(maxRetries);
+            _userInterface.WriteLine("Max retries: {0}", maxRetries);
+        }
 
         // Cell ID (CLI overrides config)
         var cellId = GetParameter(args, "-cellid", _config?.CellId ?? -1);
@@ -785,6 +950,12 @@ internal class Program
         _userInterface.WriteLine("       depotdownloader -app <id> -list-depots [-username <username>]");
         _userInterface.WriteLine("       depotdownloader -app <id> -list-branches [-username <username>]");
         _userInterface.WriteLine();
+        _userInterface.WriteLine("Usage: getting latest manifest ID for a depot:");
+        _userInterface.WriteLine("       depotdownloader -app <id> -depot <id> -get-manifest [-branch <name>]");
+        _userInterface.WriteLine();
+        _userInterface.WriteLine("Usage: checking required disk space:");
+        _userInterface.WriteLine("       depotdownloader -app <id> -check-space [-dir <path>]");
+        _userInterface.WriteLine();
         _userInterface.WriteLine("Usage: downloading a workshop item using pubfile id");
         _userInterface.WriteLine(
             "       depotdownloader -app <id> -pubfile <id> [-username <username> [-password <password>]]");
@@ -849,6 +1020,12 @@ internal class Program
         _userInterface.WriteLine(
             "  -max-downloads <#>       - maximum number of chunks to download concurrently. (default: 8).");
         _userInterface.WriteLine(
+            "  -max-speed <#>           - maximum download speed in MB/s (e.g., -max-speed 10 for 10 MB/s).");
+        _userInterface.WriteLine(
+            "  -retries <#>             - maximum retry attempts per chunk (default: 5, use 0 to disable).");
+        _userInterface.WriteLine(
+            "  -fail-fast               - stop immediately on first depot failure instead of continuing.");
+        _userInterface.WriteLine(
             "  -loginid <#>             - a unique 32-bit integer Steam LogonID in decimal, required if running multiple instances of DepotDownloader concurrently.");
         _userInterface.WriteLine(
             "  -use-lancache            - forces downloads over the local network via a Lancache instance.");
@@ -862,6 +1039,9 @@ internal class Program
         _userInterface.WriteLine();
         _userInterface.WriteLine("  -list-depots             - list all depots for the specified app and exit.");
         _userInterface.WriteLine("  -list-branches           - list all branches for the specified app and exit.");
+        _userInterface.WriteLine(
+            "  -get-manifest            - get the latest manifest ID for a depot (requires -depot).");
+        _userInterface.WriteLine("  -check-space             - check required disk space without downloading.");
         _userInterface.WriteLine("  -dry-run                 - show what would be downloaded without downloading.");
         _userInterface.WriteLine("  -verbose, -v             - show detailed output (e.g., file list in dry-run).");
         _userInterface.WriteLine();

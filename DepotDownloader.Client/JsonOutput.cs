@@ -17,6 +17,8 @@ namespace DepotDownloader.Client;
 [JsonSerializable(typeof(DepotsResultJson))]
 [JsonSerializable(typeof(BranchesResultJson))]
 [JsonSerializable(typeof(DryRunResultJson))]
+[JsonSerializable(typeof(ManifestResultJson))]
+[JsonSerializable(typeof(SpaceCheckResultJson))]
 internal partial class JsonOutputContext : JsonSerializerContext;
 
 /// <summary>
@@ -57,6 +59,16 @@ internal static class JsonOutput
     public static void WriteDryRun(DryRunResultJson result)
     {
         Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.DryRunResultJson));
+    }
+
+    public static void WriteManifest(ManifestResultJson result)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.ManifestResultJson));
+    }
+
+    public static void WriteSpaceCheck(SpaceCheckResultJson result)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.SpaceCheckResultJson));
     }
 }
 
@@ -179,4 +191,32 @@ internal sealed class FilePlanJson
     public string FileName { get; set; }
     public ulong Size { get; set; }
     public string Hash { get; set; }
+}
+
+/// <summary>
+///     Result of getting a manifest ID.
+/// </summary>
+internal sealed class ManifestResultJson
+{
+    public bool Success { get; set; } = true;
+    public uint AppId { get; set; }
+    public uint DepotId { get; set; }
+    public string Branch { get; set; }
+    public ulong? ManifestId { get; set; }
+    public bool Found { get; set; }
+}
+
+/// <summary>
+///     Result of checking disk space.
+/// </summary>
+internal sealed class SpaceCheckResultJson
+{
+    public bool Success { get; set; } = true;
+    public uint AppId { get; set; }
+    public ulong RequiredBytes { get; set; }
+    public string RequiredSize { get; set; }
+    public ulong AvailableBytes { get; set; }
+    public string AvailableSize { get; set; }
+    public string TargetDrive { get; set; }
+    public bool HasSufficientSpace { get; set; }
 }
