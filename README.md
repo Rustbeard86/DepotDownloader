@@ -187,6 +187,70 @@ Estimated download time:
 To download, run the same command without --dry-run
 ```
 
+### JSON Output Mode
+
+For scripting and automation, use `-json` to get structured JSON output:
+
+```powershell
+# Get depot list as JSON
+./DepotDownloader -app 730 -list-depots -json
+
+# Get branches as JSON
+./DepotDownloader -app 730 -list-branches -json
+
+# Get download plan as JSON (with file details using -verbose)
+./DepotDownloader -app 730 -dry-run -json -verbose
+
+# Download with JSON result
+./DepotDownloader -app 730 -json
+```
+
+**Example JSON output for `-list-depots -json`:**
+
+```json
+{
+  "success": true,
+  "appId": 730,
+  "appName": "Counter-Strike 2",
+  "appType": "game",
+  "depots": [
+    {
+      "depotId": 731,
+      "name": "Counter-Strike 2 Content",
+      "os": "windows",
+      "architecture": null,
+      "language": null,
+      "maxSize": 16234567890,
+      "isSharedInstall": false
+    }
+  ]
+}
+```
+
+**Example JSON output for `-dry-run -json`:**
+
+```json
+{
+  "success": true,
+  "appId": 730,
+  "appName": "Counter-Strike 2",
+  "totalDepots": 1,
+  "totalFiles": 1432,
+  "totalBytes": 16234567890,
+  "totalSize": "15.1 GB",
+  "depots": [
+    {
+      "depotId": 731,
+      "manifestId": 7617088375292372759,
+      "fileCount": 1432,
+      "totalBytes": 16234567890,
+      "totalSize": "15.1 GB",
+      "files": null
+    }
+  ]
+}
+```
+
 ### Authentication
 
 By default, DepotDownloader uses an anonymous account. Many games require authentication.
@@ -263,6 +327,13 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 | `-list-branches` | List all branches for the app and exit |
 | `-dry-run` | Show download plan without downloading |
 | `-verbose`, `-v` | Show detailed output (e.g., file list in dry-run) |
+
+#### Output Options
+
+| Parameter | Description |
+|-----------|-------------|
+| `-json` | Output results in JSON format for scripting/automation |
+| `-no-progress` | Disable the progress bar during downloads |
 
 #### Other
 

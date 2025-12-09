@@ -80,6 +80,8 @@ internal class Program
         var listBranches = HasParameter(args, "-list-branches") || HasParameter(args, "--list-branches");
         var dryRun = HasParameter(args, "-dry-run") || HasParameter(args, "--dry-run");
         var verbose = HasParameter(args, "-verbose") || HasParameter(args, "-v");
+        var jsonOutput = HasParameter(args, "-json") || HasParameter(args, "--json");
+        var noProgress = HasParameter(args, "-no-progress") || HasParameter(args, "--no-progress");
 
         var pubFile = GetParameter(args, "-pubfile", ContentDownloader.InvalidManifestId);
         var ugcId = GetParameter(args, "-ugc", ContentDownloader.InvalidManifestId);
@@ -102,67 +104,140 @@ internal class Program
 
         if (!loginSuccess)
         {
-            _userInterface.WriteLine("Error: Authentication failed");
+            if (jsonOutput)
+                WriteJsonError("Authentication failed");
+            else
+                _userInterface.WriteLine("Error: Authentication failed");
             return 1;
         }
 
         // Handle query commands
         if (listDepots)
-            return await ListDepotsAsync(client, appId);
+            return await ListDepotsAsync(client, appId, jsonOutput);
 
         if (listBranches)
-            return await ListBranchesAsync(client, appId);
+            return await ListBranchesAsync(client, appId, jsonOutput);
 
         if (dryRun)
-            return await DryRunAsync(client, options, verbose);
+            return await DryRunAsync(client, options, verbose, jsonOutput);
 
         // Perform download
         try
         {
+            // Setup progress bar if not disabled and not in JSON mode
+            ProgressBar progressBar = null;
+            var downloadStartTime = DateTime.UtcNow;
+
+            if (!jsonOutput && !noProgress && !Console.IsOutputRedirected)
+            {
+                progressBar = new ProgressBar();
+                client.DownloadProgress += (_, e) =>
+                {
+                    progressBar.Update(
+                        e.BytesDownloaded,
+                        e.TotalBytes,
+                        e.SpeedBytesPerSecond,
+                        e.EstimatedTimeRemaining,
+                        e.FilesCompleted,
+                        e.TotalFiles);
+                };
+            }
+
             if (pubFile != ContentDownloader.InvalidManifestId)
+            {
                 await client.DownloadPublishedFileAsync(appId, pubFile);
+            }
             else if (ugcId != ContentDownloader.InvalidManifestId)
+            {
                 await client.DownloadUgcAsync(appId, ugcId);
+            }
             else
+            {
                 await client.DownloadAppAsync(options);
+            }
+
+            progressBar?.Complete();
+
+            if (jsonOutput)
+            {
+                var duration = DateTime.UtcNow - downloadStartTime;
+                WriteJsonSuccess(appId, duration);
+            }
 
             return 0;
         }
         catch (InsufficientDiskSpaceException ex)
         {
-            _userInterface.WriteLine();
-            _userInterface.WriteError("Error: Insufficient disk space!");
-            _userInterface.WriteError("  Drive:      {0}", ex.TargetDrive);
-            _userInterface.WriteError("  Required:   {0}", FormatSize(ex.RequiredBytes));
-            _userInterface.WriteError("  Available:  {0}", FormatSize(ex.AvailableBytes));
-            _userInterface.WriteError("  Shortfall:  {0}", FormatSize(ex.ShortfallBytes));
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("Free up disk space or use -skip-disk-check to bypass this check.");
+            if (jsonOutput)
+            {
+                WriteJsonError($"Insufficient disk space on {ex.TargetDrive}. Required: {ex.RequiredBytes}, Available: {ex.AvailableBytes}");
+            }
+            else
+            {
+                _userInterface.WriteLine();
+                _userInterface.WriteError("Error: Insufficient disk space!");
+                _userInterface.WriteError("  Drive:      {0}", ex.TargetDrive);
+                _userInterface.WriteError("  Required:   {0}", FormatSize(ex.RequiredBytes));
+                _userInterface.WriteError("  Available:  {0}", FormatSize(ex.AvailableBytes));
+                _userInterface.WriteError("  Shortfall:  {0}", FormatSize(ex.ShortfallBytes));
+                _userInterface.WriteLine();
+                _userInterface.WriteLine("Free up disk space or use -skip-disk-check to bypass this check.");
+            }
             return 1;
         }
         catch (ContentDownloaderException ex)
         {
-            _userInterface.WriteLine(ex.Message);
+            if (jsonOutput)
+                WriteJsonError(ex.Message);
+            else
+                _userInterface.WriteLine(ex.Message);
             return 1;
         }
         catch (OperationCanceledException)
         {
-            _userInterface.WriteLine("Download was cancelled.");
+            if (jsonOutput)
+                WriteJsonError("Download was cancelled");
+            else
+                _userInterface.WriteLine("Download was cancelled.");
             return 1;
         }
         catch (Exception e)
         {
-            _userInterface.WriteLine("Download failed due to an unhandled exception: {0}", e.Message);
+            if (jsonOutput)
+                WriteJsonError($"Download failed: {e.Message}");
+            else
+                _userInterface.WriteLine("Download failed due to an unhandled exception: {0}", e.Message);
             throw;
         }
     }
 
-    private static async Task<int> ListDepotsAsync(DepotDownloaderClient client, uint appId)
+    private static async Task<int> ListDepotsAsync(DepotDownloaderClient client, uint appId, bool jsonOutput)
     {
         try
         {
             var appInfo = await client.GetAppInfoAsync(appId);
             var depots = await client.GetDepotsAsync(appId);
+
+            if (jsonOutput)
+            {
+                JsonOutput.WriteDepots(new DepotsResultJson
+                {
+                    AppId = appId,
+                    AppName = appInfo.Name,
+                    AppType = appInfo.Type,
+                    Depots = depots.Select(d => new DepotJson
+                    {
+                        DepotId = d.DepotId,
+                        Name = d.Name,
+                        Os = d.Os,
+                        Architecture = d.Architecture,
+                        Language = d.Language,
+                        MaxSize = d.MaxSize,
+                        IsSharedInstall = d.IsSharedInstall
+                    }).ToList()
+                });
+                return 0;
+            }
 
             _userInterface.WriteLine();
             _userInterface.WriteLine("Depots for {0} ({1}) [Type: {2}]:", appInfo.Name, appInfo.AppId, appInfo.Type);
@@ -202,17 +277,38 @@ internal class Program
         }
         catch (Exception ex)
         {
-            _userInterface.WriteLine("Error listing depots: {0}", ex.Message);
+            if (jsonOutput)
+                JsonOutput.WriteError($"Error listing depots: {ex.Message}");
+            else
+                _userInterface.WriteLine("Error listing depots: {0}", ex.Message);
             return 1;
         }
     }
 
-    private static async Task<int> ListBranchesAsync(DepotDownloaderClient client, uint appId)
+    private static async Task<int> ListBranchesAsync(DepotDownloaderClient client, uint appId, bool jsonOutput)
     {
         try
         {
             var appInfo = await client.GetAppInfoAsync(appId);
             var branches = await client.GetBranchesAsync(appId);
+
+            if (jsonOutput)
+            {
+                JsonOutput.WriteBranches(new BranchesResultJson
+                {
+                    AppId = appId,
+                    AppName = appInfo.Name,
+                    Branches = branches.Select(b => new BranchJson
+                    {
+                        Name = b.Name,
+                        BuildId = b.BuildId,
+                        TimeUpdated = b.TimeUpdated,
+                        IsPasswordProtected = b.IsPasswordProtected,
+                        Description = b.Description
+                    }).ToList()
+                });
+                return 0;
+            }
 
             _userInterface.WriteLine();
             _userInterface.WriteLine("Branches for {0} ({1}):", appInfo.Name, appId);
@@ -249,20 +345,54 @@ internal class Program
         }
         catch (Exception ex)
         {
-            _userInterface.WriteLine("Error listing branches: {0}", ex.Message);
+            if (jsonOutput)
+                JsonOutput.WriteError($"Error listing branches: {ex.Message}");
+            else
+                _userInterface.WriteLine("Error listing branches: {0}", ex.Message);
             return 1;
         }
     }
 
-    private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options, bool verbose)
+    private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options, bool verbose, bool jsonOutput)
     {
         try
         {
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("Analyzing download plan (dry-run mode)...");
-            _userInterface.WriteLine();
+            if (!jsonOutput)
+            {
+                _userInterface.WriteLine();
+                _userInterface.WriteLine("Analyzing download plan (dry-run mode)...");
+                _userInterface.WriteLine();
+            }
 
             var plan = await client.GetDownloadPlanAsync(options);
+
+            if (jsonOutput)
+            {
+                JsonOutput.WriteDryRun(new DryRunResultJson
+                {
+                    AppId = plan.AppId,
+                    AppName = plan.AppName,
+                    TotalDepots = plan.Depots.Count,
+                    TotalFiles = plan.TotalFileCount,
+                    TotalBytes = plan.TotalDownloadSize,
+                    TotalSize = FormatSize(plan.TotalDownloadSize),
+                    Depots = plan.Depots.Select(d => new DepotPlanJson
+                    {
+                        DepotId = d.DepotId,
+                        ManifestId = d.ManifestId,
+                        FileCount = d.Files.Count,
+                        TotalBytes = d.TotalSize,
+                        TotalSize = FormatSize(d.TotalSize),
+                        Files = verbose ? d.Files.Select(f => new FilePlanJson
+                        {
+                            FileName = f.FileName,
+                            Size = f.Size,
+                            Hash = f.Hash
+                        }).ToList() : null
+                    }).ToList()
+                });
+                return 0;
+            }
 
             _userInterface.WriteLine("Download Plan for {0} ({1}):", plan.AppName, plan.AppId);
             _userInterface.WriteLine();
@@ -323,12 +453,18 @@ internal class Program
         }
         catch (ContentDownloaderException ex)
         {
-            _userInterface.WriteLine("Error: {0}", ex.Message);
+            if (jsonOutput)
+                WriteJsonError(ex.Message);
+            else
+                _userInterface.WriteLine("Error: {0}", ex.Message);
             return 1;
         }
         catch (Exception ex)
         {
-            _userInterface.WriteLine("Error getting download plan: {0}", ex.Message);
+            if (jsonOutput)
+                WriteJsonError($"Error getting download plan: {ex.Message}");
+            else
+                _userInterface.WriteLine("Error getting download plan: {0}", ex.Message);
             return 1;
         }
     }
@@ -644,6 +780,9 @@ internal class Program
         _userInterface.WriteLine("  -dry-run                 - show what would be downloaded without downloading.");
         _userInterface.WriteLine("  -verbose, -v             - show detailed output (e.g., file list in dry-run).");
         _userInterface.WriteLine();
+        _userInterface.WriteLine("  -json                    - output results in JSON format for scripting/automation.");
+        _userInterface.WriteLine("  -no-progress             - disable the progress bar during downloads.");
+        _userInterface.WriteLine();
         _userInterface.WriteLine("  -debug                   - enable verbose debug logging.");
         _userInterface.WriteLine("  -V or --version          - print version and runtime.");
     }
@@ -660,5 +799,19 @@ internal class Program
 
         _userInterface.WriteLine(
             $"Runtime: {RuntimeInformation.FrameworkDescription} on {RuntimeInformation.OSDescription}");
+    }
+
+    private static void WriteJsonError(string message)
+    {
+        JsonOutput.WriteError(message);
+    }
+
+    private static void WriteJsonSuccess(uint appId, TimeSpan duration)
+    {
+        JsonOutput.WriteSuccess(new DownloadResultJson
+        {
+            AppId = appId,
+            DurationSeconds = duration.TotalSeconds
+        });
     }
 }
