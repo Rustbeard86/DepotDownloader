@@ -665,7 +665,50 @@ await client.DownloadAppAsync(options);
 | `WithLoginId(id)` | Set login ID for concurrent instances |
 | `VerifyDiskSpace(bool)` | Enable/disable disk space check |
 | `WithCancellation(token)` | Set cancellation token |
+| `WithRetryPolicy(policy)` | Set retry policy for failed downloads |
+| `WithRetry(maxRetries, initialDelay, maxDelay)` | Configure custom retry behavior |
+| `WithNoRetry()` | Disable retries |
+| `WithMaxSpeed(bytesPerSecond)` | Set max download speed (bytes/sec) |
+| `WithMaxSpeedMbps(mbPerSecond)` | Set max download speed (MB/s) |
 | `Build()` | Create the options (throws if AppId not set) |
+
+**Retry Policy:**
+```csharp
+// Use predefined policies
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .WithRetryPolicy(RetryPolicy.Aggressive) // 10 retries with longer delays
+    .Build();
+
+// Or custom retry settings
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .WithRetry(maxRetries: 10, 
+               initialDelay: TimeSpan.FromSeconds(2),
+               maxDelay: TimeSpan.FromMinutes(1))
+    .Build();
+
+// Disable retries
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .WithNoRetry()
+    .Build();
+```
+
+**Speed Limiting:**
+```csharp
+// Limit download speed to 10 MB/s
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .WithMaxSpeedMbps(10)
+    .Build();
+
+// Or in bytes per second
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .WithMaxSpeed(10 * 1024 * 1024) // 10 MB/s
+    .Build();
+```
 
 **Full options reference:**
 
@@ -697,6 +740,10 @@ var options = new DepotDownloadOptions
     MaxDownloads = 8,                     // concurrent chunks
     VerifyAll = false,                    // validate existing files
     DownloadManifestOnly = false,         // metadata only
+    
+    // Retry and throttling
+    RetryPolicy = RetryPolicy.Default,    // exponential backoff with 5 retries
+    MaxBytesPerSecond = null,             // null = unlimited
     
     // File filtering
     FilesToDownload = new HashSet<string>
