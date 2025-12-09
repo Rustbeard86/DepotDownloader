@@ -1,7 +1,7 @@
 # DepotDownloader
 
-[![License](https://img.shields.io/github/license/SteamRE/DepotDownloader.svg?label=License)](LICENSE)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/SteamRE/DepotDownloader/build.yml?branch=master&label=Build)](https://github.com/SteamRE/DepotDownloader/actions)
+[![License](https://img.shields.io/github/license/Rustbeard86/DepotDownloader.svg?label=License)](LICENSE)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Rustbeard86/DepotDownloader/build.yml?branch=master&label=Build)](https://github.com/Rustbeard86/DepotDownloader/actions)
 [![NuGet](https://img.shields.io/nuget/v/DepotDownloader.Lib.svg?label=NuGet)](https://www.nuget.org/packages/DepotDownloader.Lib/)
 
 Steam depot downloader utilizing the [SteamKit2](https://github.com/SteamRE/SteamKit) library. 
@@ -12,6 +12,8 @@ Steam depot downloader utilizing the [SteamKit2](https://github.com/SteamRE/Stea
 - **DepotDownloader.Lib** - .NET library for programmatic Steam content downloads
 
 Supports **.NET 10.0** and later.
+
+> **Note:** This is a fork of [SteamRE/DepotDownloader](https://github.com/SteamRE/DepotDownloader) with significant enhancements including library extraction for programmatic use.
 
 ---
 
@@ -43,25 +45,12 @@ Supports **.NET 10.0** and later.
 
 #### Directly from GitHub
 
-Download a binary from [the releases page](https://github.com/SteamRE/DepotDownloader/releases/latest).
-
-#### via Windows Package Manager CLI (winget)
-
-```powershell
-winget install --exact --id SteamRE.DepotDownloader
-```
-
-#### via Homebrew (macOS)
-
-```shell
-brew tap steamre/tools
-brew install depotdownloader
-```
+Download a binary from [the releases page](https://github.com/Rustbeard86/DepotDownloader/releases/latest).
 
 #### Build from Source
 
 ```shell
-git clone https://github.com/SteamRE/DepotDownloader.git
+git clone https://github.com/Rustbeard86/DepotDownloader.git
 cd DepotDownloader
 dotnet build -c Release
 ```
@@ -544,5 +533,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Credits
 
+- [SteamRE/DepotDownloader](https://github.com/SteamRE/DepotDownloader) - Original project
 - [SteamKit2](https://github.com/SteamRE/SteamKit) - Steam protocol library
-- [SteamRE Team](https://github.com/SteamRE) - Project maintainers
