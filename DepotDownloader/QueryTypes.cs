@@ -95,6 +95,57 @@ public record DiskSpaceCheckResult(
     string TargetDrive);
 
 /// <summary>
+///     Event arguments for download progress reporting.
+/// </summary>
+public class DownloadProgressEventArgs : EventArgs
+{
+    /// <summary>
+    ///     Total bytes downloaded so far.
+    /// </summary>
+    public ulong BytesDownloaded { get; init; }
+
+    /// <summary>
+    ///     Total bytes to download.
+    /// </summary>
+    public ulong TotalBytes { get; init; }
+
+    /// <summary>
+    ///     The current file being downloaded, or null if between files.
+    /// </summary>
+    public string CurrentFile { get; init; }
+
+    /// <summary>
+    ///     Number of files completed.
+    /// </summary>
+    public int FilesCompleted { get; init; }
+
+    /// <summary>
+    ///     Total number of files to download.
+    /// </summary>
+    public int TotalFiles { get; init; }
+
+    /// <summary>
+    ///     Current download speed in bytes per second.
+    /// </summary>
+    public double SpeedBytesPerSecond { get; init; }
+
+    /// <summary>
+    ///     Estimated time remaining based on current speed.
+    /// </summary>
+    public TimeSpan EstimatedTimeRemaining { get; init; }
+
+    /// <summary>
+    ///     Current depot being downloaded.
+    /// </summary>
+    public uint CurrentDepotId { get; init; }
+
+    /// <summary>
+    ///     Progress percentage (0-100).
+    /// </summary>
+    public double ProgressPercent => TotalBytes > 0 ? (double)BytesDownloaded / TotalBytes * 100.0 : 0.0;
+}
+
+/// <summary>
 ///     Exception thrown when there is insufficient disk space for a download.
 /// </summary>
 public class InsufficientDiskSpaceException(ulong requiredBytes, ulong availableBytes, string targetDrive)

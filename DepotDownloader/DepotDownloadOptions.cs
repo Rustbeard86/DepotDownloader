@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace DepotDownloader.Lib;
 
@@ -108,4 +109,10 @@ public sealed class DepotDownloadOptions
     ///     Verify disk space before downloading. Default is true.
     /// </summary>
     public bool VerifyDiskSpace { get; set; } = true;
+
+    /// <summary>
+    ///     Cancellation token for graceful cancellation from GUI apps or services.
+    ///     If not provided, an internal token will be created.
+    /// </summary>
+    public CancellationToken CancellationToken { get; set; } = CancellationToken.None;
 }

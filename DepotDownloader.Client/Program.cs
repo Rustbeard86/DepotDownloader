@@ -285,12 +285,10 @@ internal class Program
                     _userInterface.WriteLine();
                     _userInterface.WriteLine("    Files:");
                     foreach (var file in depot.Files.OrderBy(f => f.FileName).Take(50))
-                    {
                         _userInterface.WriteLine("      {0,-60} {1,12} {2}",
                             file.FileName.Length > 58 ? "..." + file.FileName[^55..] : file.FileName,
                             FormatSize(file.Size),
                             file.Hash[..8]);
-                    }
                     if (depot.Files.Count > 50)
                         _userInterface.WriteLine("      ... and {0} more files", depot.Files.Count - 50);
                 }

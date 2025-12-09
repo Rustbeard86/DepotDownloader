@@ -28,7 +28,8 @@ internal static class DepotFileDownloader
         CdnClientPool cdnPool,
         Steam3Session steam3,
         DownloadConfig config,
-        IUserInterface userInterface)
+        IUserInterface userInterface,
+        DownloadProgressContext progressContext = null)
     {
         var depot = depotFilesData.DepotDownloadInfo;
         var depotCounter = depotFilesData.DepotCounter;
@@ -57,7 +58,7 @@ internal static class DepotFileDownloader
             await DownloadChunkAsync(
                 cts, downloadCounter, depotFilesData,
                 q.fileData, q.fileStreamData, q.chunk,
-                cdnPool, steam3, userInterface
+                cdnPool, steam3, userInterface, progressContext
             );
         });
 
@@ -299,7 +300,8 @@ internal static class DepotFileDownloader
         DepotManifest.ChunkData chunk,
         CdnClientPool cdnPool,
         Steam3Session steam3,
-        IUserInterface userInterface)
+        IUserInterface userInterface,
+        DownloadProgressContext progressContext = null)
     {
         cts.Token.ThrowIfCancellationRequested();
 
@@ -455,7 +457,15 @@ internal static class DepotFileDownloader
         // Update global progress
         userInterface?.UpdateProgress(totalBytesDownloaded, downloadCounter.TotalDownloadSize);
 
-        if (remainingChunks == 0)
+        // Fire progress event if context is provided
+        var fileCompleted = remainingChunks == 0;
+        progressContext?.ReportProgress(
+            (ulong)written,
+            file.FileName,
+            depot.DepotId,
+            fileCompleted);
+
+        if (fileCompleted)
         {
             var fileFinalPath = Path.Combine(depot.InstallDir, file.FileName);
             userInterface?.WriteLine("{0,6:#00.00}% {1}",

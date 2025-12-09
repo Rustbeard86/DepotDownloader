@@ -398,8 +398,16 @@ public static class ContentDownloader
         File.Move(fileStagingPath, fileFinalPath);
     }
 
-    public static async Task DownloadAppAsync(uint appId, List<(uint depotId, ulong manifestId)> depotManifestIds,
+    public static Task DownloadAppAsync(uint appId, List<(uint depotId, ulong manifestId)> depotManifestIds,
         string branch, string os, string arch, string language, bool lv, bool isUgc)
+    {
+        return DownloadAppAsync(appId, depotManifestIds, branch, os, arch, language, lv, isUgc, null,
+            CancellationToken.None);
+    }
+
+    internal static async Task DownloadAppAsync(uint appId, List<(uint depotId, ulong manifestId)> depotManifestIds,
+        string branch, string os, string arch, string language, bool lv, bool isUgc,
+        DownloadProgressContext progressContext, CancellationToken cancellationToken)
     {
         if (Steam3 is null) throw new InvalidOperationException("Steam3 must be initialized before downloading.");
 
@@ -536,13 +544,67 @@ public static class ContentDownloader
 
         try
         {
-            await DownloadSteam3Async(infos).ConfigureAwait(false);
+            await DownloadSteam3Async(infos, progressContext, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             _userInterface?.WriteLine("App {0} was not completely downloaded.", appId);
             throw;
         }
+    }
+
+    private static async Task DownloadSteam3Async(
+        List<DepotDownloadInfo> depots,
+        DownloadProgressContext progressContext, CancellationToken cancellationToken)
+    {
+        _userInterface?.UpdateProgress(0, 1);
+
+        await _cdnPool.UpdateServerList();
+
+        // Create a linked token source if external token is provided
+        using var linkedCts = cancellationToken.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : new CancellationTokenSource();
+
+        var downloadCounter = new GlobalDownloadCounter();
+        var depotsToDownload = new List<DepotFilesData>(depots.Count);
+        var allFileNamesAllDepots = new HashSet<string>();
+
+        foreach (var depot in depots)
+        {
+            var depotFileData = await ProcessDepotManifestAndFiles(linkedCts, depot, downloadCounter);
+
+            if (depotFileData is not null)
+            {
+                depotsToDownload.Add(depotFileData);
+                allFileNamesAllDepots.UnionWith(depotFileData.AllFileNames);
+            }
+
+            linkedCts.Token.ThrowIfCancellationRequested();
+        }
+
+        // Store the total size before it gets decremented during file processing
+        downloadCounter.TotalDownloadSize = downloadCounter.CompleteDownloadSize;
+
+        if (!string.IsNullOrWhiteSpace(Config.InstallDirectory) && depotsToDownload.Count > 0)
+        {
+            var claimedFileNames = new HashSet<string>();
+
+            for (var i = depotsToDownload.Count - 1; i >= 0; i--)
+            {
+                depotsToDownload[i].FilteredFiles.RemoveAll(file => claimedFileNames.Contains(file.FileName));
+                claimedFileNames.UnionWith(depotsToDownload[i].AllFileNames);
+            }
+        }
+
+        foreach (var depotFileData in depotsToDownload)
+            await DepotFileDownloader.DownloadDepotFilesAsync(linkedCts, downloadCounter, depotFileData,
+                allFileNamesAllDepots, _cdnPool, Steam3, Config, _userInterface, progressContext);
+
+        _userInterface?.UpdateProgress(downloadCounter.TotalDownloadSize, downloadCounter.TotalDownloadSize);
+
+        _userInterface?.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
+            downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);
     }
 
     private static async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
@@ -603,54 +665,6 @@ public static class ContentDownloader
         }
 
         return new DepotDownloadInfo(depotId, containingAppId, manifestId, branch, installDir, depotKey);
-    }
-
-    private static async Task DownloadSteam3Async(List<DepotDownloadInfo> depots)
-    {
-        _userInterface?.UpdateProgress(0, 1);
-
-        await _cdnPool.UpdateServerList();
-
-        var cts = new CancellationTokenSource();
-        var downloadCounter = new GlobalDownloadCounter();
-        var depotsToDownload = new List<DepotFilesData>(depots.Count);
-        var allFileNamesAllDepots = new HashSet<string>();
-
-        foreach (var depot in depots)
-        {
-            var depotFileData = await ProcessDepotManifestAndFiles(cts, depot, downloadCounter);
-
-            if (depotFileData is not null)
-            {
-                depotsToDownload.Add(depotFileData);
-                allFileNamesAllDepots.UnionWith(depotFileData.AllFileNames);
-            }
-
-            cts.Token.ThrowIfCancellationRequested();
-        }
-
-        // Store the total size before it gets decremented during file processing
-        downloadCounter.TotalDownloadSize = downloadCounter.CompleteDownloadSize;
-
-        if (!string.IsNullOrWhiteSpace(Config.InstallDirectory) && depotsToDownload.Count > 0)
-        {
-            var claimedFileNames = new HashSet<string>();
-
-            for (var i = depotsToDownload.Count - 1; i >= 0; i--)
-            {
-                depotsToDownload[i].FilteredFiles.RemoveAll(file => claimedFileNames.Contains(file.FileName));
-                claimedFileNames.UnionWith(depotsToDownload[i].AllFileNames);
-            }
-        }
-
-        foreach (var depotFileData in depotsToDownload)
-            await DepotFileDownloader.DownloadDepotFilesAsync(cts, downloadCounter, depotFileData,
-                allFileNamesAllDepots, _cdnPool, Steam3, Config, _userInterface);
-
-        _userInterface?.UpdateProgress(downloadCounter.TotalDownloadSize, downloadCounter.TotalDownloadSize);
-
-        _userInterface?.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
-            downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);
     }
 
     private static async Task<DepotFilesData> ProcessDepotManifestAndFiles(CancellationTokenSource cts,
