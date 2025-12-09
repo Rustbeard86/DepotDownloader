@@ -33,7 +33,6 @@ internal sealed class DepotFilesData
     public required DepotDownloadCounter DepotCounter { get; init; }
     public required DepotDownloadInfo DepotDownloadInfo { get; init; }
     public required List<DepotManifest.FileData> FilteredFiles { get; init; }
-    public required DepotManifest Manifest { get; init; }
     public DepotManifest PreviousManifest { get; init; }
     public required string StagingDirectoryPath { get; init; }
 }

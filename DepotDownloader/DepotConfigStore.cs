@@ -95,10 +95,7 @@ public class DepotConfigStore
 
         lock (LockObject)
         {
-            if (_instance is null)
-                throw new InvalidOperationException("Cannot save config before loading");
-
-            instance = _instance;
+            instance = _instance ?? throw new InvalidOperationException("Cannot save config before loading");
         }
 
         try

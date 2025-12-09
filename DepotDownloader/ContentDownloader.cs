@@ -338,8 +338,8 @@ public static class ContentDownloader
             if (depotIdsFound.Count < depotIdsExpected.Count)
             {
                 var remainingDepotIds = depotIdsExpected.Except(depotIdsFound);
-                throw new ContentDownloaderException(string.Format("Depot {0} not listed for app {1}",
-                    string.Join(", ", remainingDepotIds), appId));
+                throw new ContentDownloaderException(
+                    $"Depot {string.Join(", ", remainingDepotIds)} not listed for app {appId}");
             }
         }
 
@@ -660,7 +660,6 @@ public static class ContentDownloader
             DepotDownloadInfo = depot,
             DepotCounter = depotCounter,
             StagingDirectoryPath = stagingDirPath,
-            Manifest = newManifest,
             PreviousManifest = oldManifest,
             FilteredFiles = filesAfterExclusions,
             AllFileNames = allFileNames
