@@ -29,6 +29,7 @@ internal static class DepotFileDownloader
         Steam3Session steam3,
         DownloadConfig config,
         IUserInterface userInterface,
+        DownloadStateStore stateStore = null,
         DownloadProgressCallback progressCallback = null)
     {
         var depot = depotFilesData.DepotDownloadInfo;
@@ -50,7 +51,7 @@ internal static class DepotFileDownloader
         await Parallel.ForEachAsync(files, parallelOptions, async (file, _) =>
         {
             await Task.Yield();
-            ProcessDepotFile(cts, downloadCounter, depotFilesData, file, networkChunkQueue, config, userInterface);
+            ProcessDepotFile(cts, downloadCounter, depotFilesData, file, networkChunkQueue, config, userInterface, stateStore);
         });
 
         // Create speed limiter if configured
@@ -67,7 +68,7 @@ internal static class DepotFileDownloader
                 await DownloadChunkAsync(
                     cts, downloadCounter, depotFilesData,
                     q.fileData, q.fileStreamData, q.chunk,
-                    cdnPool, steam3, config, userInterface, speedLimiter, progressCallback
+                    cdnPool, steam3, config, userInterface, speedLimiter, stateStore, progressCallback
                 );
             });
         }
@@ -75,6 +76,9 @@ internal static class DepotFileDownloader
         {
             speedLimiter?.Dispose();
         }
+
+        // Mark depot as complete in state store
+        stateStore?.MarkDepotComplete(depot.DepotId);
 
         // Check for deleted files if updating the depot.
         if (depotFilesData.PreviousManifest is { Files: not null })
@@ -116,7 +120,8 @@ internal static class DepotFileDownloader
         DepotManifest.FileData file,
         ConcurrentQueue<(FileStreamData, DepotManifest.FileData, DepotManifest.ChunkData)> networkChunkQueue,
         DownloadConfig config,
-        IUserInterface userInterface)
+        IUserInterface userInterface,
+        DownloadStateStore stateStore = null)
     {
         cts.Token.ThrowIfCancellationRequested();
 
@@ -152,7 +157,30 @@ internal static class DepotFileDownloader
                 throw new ContentDownloaderException($"Failed to allocate file {fileFinalPath}: {ex.Message}");
             }
 
-            neededChunks = [.. file.Chunks];
+            // Filter out already completed chunks when resuming
+            neededChunks = [];
+            foreach (var chunk in file.Chunks)
+            {
+                if (chunk.ChunkID is null) continue;
+                
+                var chunkId = Convert.ToHexString(chunk.ChunkID).ToLowerInvariant();
+                if (stateStore is not null && stateStore.IsChunkComplete(depot.DepotId, chunkId))
+                {
+                    // Chunk already downloaded, skip it
+                    lock (depotDownloadCounter)
+                    {
+                        depotDownloadCounter.SizeDownloaded += chunk.UncompressedLength;
+                    }
+                    lock (downloadCounter)
+                    {
+                        downloadCounter.CompleteDownloadSize -= chunk.UncompressedLength;
+                    }
+                }
+                else
+                {
+                    neededChunks.Add(chunk);
+                }
+            }
         }
         else
         {
@@ -317,6 +345,7 @@ internal static class DepotFileDownloader
         DownloadConfig config,
         IUserInterface userInterface,
         SpeedLimiter speedLimiter,
+        DownloadStateStore stateStore = null,
         DownloadProgressCallback progressCallback = null)
     {
         cts.Token.ThrowIfCancellationRequested();
@@ -328,6 +357,19 @@ internal static class DepotFileDownloader
         if (chunk.ChunkID is null) return;
 
         var chunkId = Convert.ToHexString(chunk.ChunkID).ToLowerInvariant();
+
+        // Skip if already downloaded (resume support)
+        if (stateStore is not null && stateStore.IsChunkComplete(depot.DepotId, chunkId))
+        {
+            var remaining = Interlocked.Decrement(ref fileStreamData.ChunksToDownload);
+            if (remaining == 0)
+            {
+                fileStreamData.FileStream?.Dispose();
+                fileStreamData.FileLock.Dispose();
+                stateStore.MarkFileComplete(depot.DepotId, file.FileName);
+            }
+            return;
+        }
 
         var written = 0;
         var chunkBuffer = ArrayPool<byte>.Shared.Rent((int)chunk.UncompressedLength);
@@ -460,6 +502,9 @@ internal static class DepotFileDownloader
 
                 fileStreamData.FileStream.Seek((long)chunk.Offset, SeekOrigin.Begin);
                 await fileStreamData.FileStream.WriteAsync(chunkBuffer.AsMemory(0, written), cts.Token);
+                
+                // Mark chunk as complete for resume support
+                stateStore?.MarkChunkComplete(depot.DepotId, chunkId, chunk.UncompressedLength);
             }
             finally
             {
@@ -477,6 +522,9 @@ internal static class DepotFileDownloader
             // ReSharper disable once MethodHasAsyncOverload
             fileStreamData.FileStream?.Dispose();
             fileStreamData.FileLock.Dispose();
+            
+            // Mark file as complete for resume support
+            stateStore?.MarkFileComplete(depot.DepotId, file.FileName);
         }
 
         ulong sizeDownloaded;

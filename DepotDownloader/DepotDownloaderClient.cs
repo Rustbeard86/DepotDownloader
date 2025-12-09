@@ -390,6 +390,7 @@ public sealed class DepotDownloaderClient : IDisposable
         _downloader.Config.DownloadAllLanguages = options.DownloadAllLanguages;
         _downloader.Config.RetryPolicy = options.RetryPolicy;
         _downloader.Config.MaxBytesPerSecond = options.MaxBytesPerSecond;
+        _downloader.Config.Resume = options.Resume;
     }
 
     private void ThrowIfDisposed()

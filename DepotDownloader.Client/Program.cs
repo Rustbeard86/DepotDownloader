@@ -100,6 +100,7 @@ internal class Program
         var verbose = HasParameter(args, "-verbose") || HasParameter(args, "-v");
         var jsonOutput = HasParameter(args, "-json") || HasParameter(args, "--json");
         var noProgress = HasParameter(args, "-no-progress") || HasParameter(args, "--no-progress");
+        var resume = HasParameter(args, "-resume") || HasParameter(args, "--resume");
 
         var pubFile = GetParameter(args, "-pubfile", SteamConstants.InvalidManifestId);
         var ugcId = GetParameter(args, "-ugc", SteamConstants.InvalidManifestId);
@@ -107,7 +108,10 @@ internal class Program
         // Build download options (unless this is a query-only command)
         DepotDownloadOptions options = null;
         if (!listDepots && !listBranches)
+        {
             options = await BuildDownloadOptionsAsync(args, appId);
+            options.Resume = resume;
+        }
 
         PrintUnconsumedArgs(args);
 
@@ -824,6 +828,8 @@ internal class Program
             "  -use-lancache            - forces downloads over the local network via a Lancache instance.");
         _userInterface.WriteLine(
             "  -skip-disk-check         - skip disk space verification before downloading.");
+        _userInterface.WriteLine(
+            "  -resume                  - resume a previously interrupted download.");
         _userInterface.WriteLine();
         _userInterface.WriteLine("  -config <file.json>      - load settings from a JSON configuration file.");
         _userInterface.WriteLine("                             CLI arguments override config file settings.");

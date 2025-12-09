@@ -39,6 +39,7 @@ public sealed class DepotDownloadOptionsBuilder
     private bool _verifyDiskSpace = true;
     private RetryPolicy _retryPolicy = RetryPolicy.Default;
     private long? _maxBytesPerSecond;
+    private bool _resume;
 
     /// <summary>
     ///     Sets the Steam AppID to download.
@@ -342,6 +343,17 @@ public sealed class DepotDownloadOptionsBuilder
     }
 
     /// <summary>
+    ///     Enables resume support to continue interrupted downloads.
+    /// </summary>
+    /// <param name="enable">True to enable resume support.</param>
+    /// <returns>The builder instance for chaining.</returns>
+    public DepotDownloadOptionsBuilder WithResume(bool enable = true)
+    {
+        _resume = enable;
+        return this;
+    }
+
+    /// <summary>
     ///     Sets the cancellation token for the download operation.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -386,6 +398,7 @@ public sealed class DepotDownloadOptionsBuilder
             VerifyDiskSpace = _verifyDiskSpace,
             RetryPolicy = _retryPolicy,
             MaxBytesPerSecond = _maxBytesPerSecond,
+            Resume = _resume,
             CancellationToken = _cancellationToken
         };
     }

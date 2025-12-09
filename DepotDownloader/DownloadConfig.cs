@@ -34,4 +34,7 @@ public class DownloadConfig
     // Retry and throttling
     public RetryPolicy RetryPolicy { get; set; } = RetryPolicy.Default;
     public long? MaxBytesPerSecond { get; set; }
+
+    // Resume support
+    public bool Resume { get; set; }
 }

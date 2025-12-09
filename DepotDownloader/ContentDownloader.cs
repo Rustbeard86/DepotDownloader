@@ -686,6 +686,21 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
         var depotsToDownload = new List<DepotFilesData>(depots.Count);
         var allFileNamesAllDepots = new HashSet<string>();
 
+        // Initialize state store for resume support
+        DownloadStateStore stateStore = null;
+        if (Config.Resume && !string.IsNullOrWhiteSpace(Config.InstallDirectory))
+        {
+            stateStore = new DownloadStateStore(Config.InstallDirectory);
+            var appId = depots.FirstOrDefault()?.AppId ?? 0;
+            var branch = depots.FirstOrDefault()?.Branch ?? "public";
+            var isResuming = stateStore.LoadOrCreate(appId, branch, Config.Resume);
+            
+            if (isResuming)
+            {
+                _userInterface?.WriteLine("Resuming previous download...");
+            }
+        }
+
         foreach (var depot in depots)
         {
             var depotFileData = await ProcessDepotManifestAndFiles(cts, depot, downloadCounter);
@@ -694,6 +709,9 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
             {
                 depotsToDownload.Add(depotFileData);
                 allFileNamesAllDepots.UnionWith(depotFileData.AllFileNames);
+                
+                // Initialize depot in state store
+                stateStore?.InitializeDepot(depot.DepotId, depot.ManifestId, depotFileData.DepotCounter.CompleteDownloadSize);
             }
 
             cts.Token.ThrowIfCancellationRequested();
@@ -701,6 +719,7 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
 
         // Store the total size before it gets decremented during file processing
         downloadCounter.TotalDownloadSize = downloadCounter.CompleteDownloadSize;
+        stateStore?.SetTotalBytes(downloadCounter.TotalDownloadSize);
 
         // Count total files
         downloadCounter.TotalFiles = depotsToDownload.Sum(d =>
@@ -720,14 +739,26 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
         // Start speed tracking
         downloadCounter.StartSpeedTracking();
 
-        foreach (var depotFileData in depotsToDownload)
-            await DepotFileDownloader.DownloadDepotFilesAsync(cts, downloadCounter, depotFileData,
-                allFileNamesAllDepots, _cdnPool, Steam3, Config, _userInterface, progressCallback);
+        try
+        {
+            foreach (var depotFileData in depotsToDownload)
+                await DepotFileDownloader.DownloadDepotFilesAsync(cts, downloadCounter, depotFileData,
+                    allFileNamesAllDepots, _cdnPool, Steam3, Config, _userInterface, stateStore, progressCallback);
 
-        _userInterface?.UpdateProgress(downloadCounter.TotalDownloadSize, downloadCounter.TotalDownloadSize);
+            _userInterface?.UpdateProgress(downloadCounter.TotalDownloadSize, downloadCounter.TotalDownloadSize);
 
-        _userInterface?.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
-            downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);
+            _userInterface?.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
+                downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);
+
+            // Delete state file on successful completion
+            stateStore?.Delete();
+        }
+        catch (OperationCanceledException)
+        {
+            // Save state on cancellation for resume
+            stateStore?.Save();
+            throw;
+        }
     }
 
     private async Task<DepotFilesData> ProcessDepotManifestAndFiles(CancellationTokenSource cts,

@@ -126,6 +126,13 @@ public sealed class DepotDownloadOptions
     public long? MaxBytesPerSecond { get; set; }
 
     /// <summary>
+    ///     Enable resume support to continue interrupted downloads.
+    ///     When enabled, download state is tracked and can be resumed.
+    ///     Default is false.
+    /// </summary>
+    public bool Resume { get; set; }
+
+    /// <summary>
     ///     Cancellation token for graceful cancellation of download operations.
     ///     Allows GUI applications and services to cancel downloads.
     /// </summary>
