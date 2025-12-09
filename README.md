@@ -251,6 +251,7 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 | `-max-downloads <#>` | Concurrent downloads (default: 8) |
 | `-cellid <#>` | Override content server CellID |
 | `-use-lancache` | Route downloads through Lancache |
+| `-skip-disk-check` | Skip disk space verification before downloading |
 
 #### Discovery & Planning
 
@@ -522,6 +523,12 @@ try
 {
     await client.DownloadAppAsync(options);
 }
+catch (InsufficientDiskSpaceException ex)
+{
+    // Not enough disk space (automatic check, can be disabled with VerifyDiskSpace = false)
+    Console.WriteLine($"Not enough space on {ex.TargetDrive}");
+    Console.WriteLine($"Need {ex.RequiredBytes} bytes, have {ex.AvailableBytes}, short by {ex.ShortfallBytes}");
+}
 catch (ContentDownloaderException ex)
 {
     // Steam/download-specific errors
@@ -537,6 +544,19 @@ catch (OperationCanceledException)
     // Download was cancelled
     Console.WriteLine("Download cancelled");
 }
+```
+
+### Disk Space Verification
+
+By default, `DownloadAppAsync` checks disk space before downloading and throws `InsufficientDiskSpaceException` if there isn't enough space. You can disable this:
+
+```csharp
+var options = new DepotDownloadOptions
+{
+    AppId = 730,
+    InstallDirectory = @"C:\Games\CS2",
+    VerifyDiskSpace = false  // Skip automatic disk space check
+};
 ```
 
 ### Debug Logging

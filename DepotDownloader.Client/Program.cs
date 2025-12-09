@@ -127,6 +127,18 @@ internal class Program
 
             return 0;
         }
+        catch (InsufficientDiskSpaceException ex)
+        {
+            _userInterface.WriteLine();
+            _userInterface.WriteError("Error: Insufficient disk space!");
+            _userInterface.WriteError("  Drive:      {0}", ex.TargetDrive);
+            _userInterface.WriteError("  Required:   {0}", FormatSize(ex.RequiredBytes));
+            _userInterface.WriteError("  Available:  {0}", FormatSize(ex.AvailableBytes));
+            _userInterface.WriteError("  Shortfall:  {0}", FormatSize(ex.ShortfallBytes));
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("Free up disk space or use -skip-disk-check to bypass this check.");
+            return 1;
+        }
         catch (ContentDownloaderException ex)
         {
             _userInterface.WriteLine(ex.Message);
@@ -339,7 +351,8 @@ internal class Program
                         HasParameter(args, "-verify_all") ||
                         HasParameter(args, "-validate"),
             MaxDownloads = GetParameter(args, "-max-downloads", 8),
-            LoginId = HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null
+            LoginId = HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null,
+            VerifyDiskSpace = !HasParameter(args, "-skip-disk-check") && !HasParameter(args, "--skip-disk-check")
         };
 
         // Cell ID
@@ -606,6 +619,8 @@ internal class Program
             "  -loginid <#>             - a unique 32-bit integer Steam LogonID in decimal, required if running multiple instances of DepotDownloader concurrently.");
         _userInterface.WriteLine(
             "  -use-lancache            - forces downloads over the local network via a Lancache instance.");
+        _userInterface.WriteLine(
+            "  -skip-disk-check         - skip disk space verification before downloading.");
         _userInterface.WriteLine();
         _userInterface.WriteLine("  -list-depots             - list all depots for the specified app and exit.");
         _userInterface.WriteLine("  -list-branches           - list all branches for the specified app and exit.");
