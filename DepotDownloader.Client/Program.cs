@@ -21,18 +21,16 @@ internal class Program
         // Initialize the user interface first
         _userInterface = new ConsoleUserInterface();
 
-        if (args.Length == 0)
+        switch (args.Length)
         {
-            PrintVersion();
-            PrintUsage();
-            return 0;
-        }
-
-        // Not using HasParameter because it is case-insensitive
-        if (args.Length == 1 && (args[0] == "-V" || args[0] == "--version"))
-        {
-            PrintVersion(true);
-            return 0;
+            case 0:
+                PrintVersion();
+                PrintUsage();
+                return 0;
+            // Not using HasParameter because it is case-insensitive
+            case 1 when args[0] == "-V" || args[0] == "--version":
+                PrintVersion(true);
+                return 0;
         }
 
         _consumedArgs = new bool[args.Length];
