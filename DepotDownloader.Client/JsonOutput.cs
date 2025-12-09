@@ -26,6 +26,15 @@ internal static class JsonOutput
 {
     public static void WriteSuccess(DownloadResultJson result)
     {
+        result.Success = true;
+        result.Status = "completed";
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.DownloadResultJson));
+    }
+
+    public static void WritePartialSuccess(DownloadResultJson result)
+    {
+        result.Success = false;
+        result.Status = "partial";
         Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.DownloadResultJson));
     }
 
@@ -61,7 +70,7 @@ internal sealed class ErrorResultJson
 }
 
 /// <summary>
-///     Result of a successful download operation.
+///     Result of a download operation.
 /// </summary>
 internal sealed class DownloadResultJson
 {
@@ -69,6 +78,20 @@ internal sealed class DownloadResultJson
     public uint AppId { get; set; }
     public string Status { get; set; } = "completed";
     public double DurationSeconds { get; set; }
+    public ulong TotalBytesDownloaded { get; set; }
+    public int TotalFilesDownloaded { get; set; }
+    public int SuccessfulDepots { get; set; }
+    public int FailedDepots { get; set; }
+    public List<DepotFailureJson> Failures { get; set; }
+}
+
+/// <summary>
+///     Information about a failed depot download.
+/// </summary>
+internal sealed class DepotFailureJson
+{
+    public uint DepotId { get; set; }
+    public string ErrorMessage { get; set; }
 }
 
 /// <summary>

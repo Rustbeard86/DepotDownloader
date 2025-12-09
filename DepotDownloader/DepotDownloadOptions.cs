@@ -134,6 +134,13 @@ public sealed class DepotDownloadOptions
     public bool Resume { get; set; }
 
     /// <summary>
+    ///     Stop downloading immediately when any depot fails.
+    ///     When false (default), continues downloading remaining depots and reports failures at the end.
+    ///     When true, throws an exception on the first depot failure.
+    /// </summary>
+    public bool FailFast { get; set; }
+
+    /// <summary>
     ///     Cancellation token for graceful cancellation of download operations.
     ///     Allows GUI applications and services to cancel downloads.
     /// </summary>

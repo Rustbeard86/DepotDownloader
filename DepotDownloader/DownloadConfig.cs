@@ -37,4 +37,11 @@ public class DownloadConfig
 
     // Resume support
     public bool Resume { get; set; }
+
+    // Error handling
+    /// <summary>
+    ///     When true, stops downloading immediately on first depot failure.
+    ///     When false (default), continues downloading remaining depots and reports failures at the end.
+    /// </summary>
+    public bool FailFast { get; set; }
 }

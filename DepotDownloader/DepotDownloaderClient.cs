@@ -296,12 +296,13 @@ public sealed class DepotDownloaderClient : IDisposable
     ///     Downloads Steam app content based on the provided options.
     /// </summary>
     /// <param name="options">Download configuration options.</param>
+    /// <returns>A DownloadResult containing the outcome of each depot download.</returns>
     /// <exception cref="ArgumentNullException">When options is null.</exception>
     /// <exception cref="ArgumentException">When AppId is not specified.</exception>
-    /// <exception cref="ContentDownloaderException">When download fails.</exception>
+    /// <exception cref="ContentDownloaderException">When download fails (with FailFast enabled).</exception>
     /// <exception cref="InsufficientDiskSpaceException">When there is not enough disk space and VerifyDiskSpace is true.</exception>
     /// <exception cref="OperationCanceledException">When the operation is cancelled via CancellationToken.</exception>
-    public async Task DownloadAppAsync(DepotDownloadOptions options)
+    public async Task<DownloadResult> DownloadAppAsync(DepotDownloadOptions options)
     {
         ThrowIfDisposed();
         ThrowIfNotLoggedIn();
@@ -329,7 +330,7 @@ public sealed class DepotDownloaderClient : IDisposable
         if (DownloadProgress is not null) progressCallback = args => DownloadProgress?.Invoke(this, args);
 
         // Perform download with cancellation token and progress callback
-        await _downloader.DownloadAppAsync(
+        return await _downloader.DownloadAppAsync(
             options.AppId,
             options.DepotManifestIds,
             options.Branch,
@@ -402,6 +403,7 @@ public sealed class DepotDownloaderClient : IDisposable
         _downloader.Config.RetryPolicy = options.RetryPolicy;
         _downloader.Config.MaxBytesPerSecond = options.MaxBytesPerSecond;
         _downloader.Config.Resume = options.Resume;
+        _downloader.Config.FailFast = options.FailFast;
     }
 
     private void ThrowIfDisposed()

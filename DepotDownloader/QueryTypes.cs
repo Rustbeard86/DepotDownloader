@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 
 namespace DepotDownloader.Lib;
 
@@ -193,4 +194,113 @@ public class InsufficientDiskSpaceException(ulong requiredBytes, ulong available
 
         return $"{size:0.##} {sizes[order]}";
     }
+}
+
+/// <summary>
+///     Result of downloading a single depot.
+/// </summary>
+/// <param name="DepotId">The depot ID.</param>
+/// <param name="ManifestId">The manifest ID that was downloaded.</param>
+/// <param name="Success">Whether the depot download succeeded.</param>
+/// <param name="ErrorMessage">Error message if the download failed, null if successful.</param>
+/// <param name="BytesDownloaded">Number of bytes downloaded from this depot.</param>
+/// <param name="FilesDownloaded">Number of files downloaded from this depot.</param>
+public record DepotDownloadResult(
+    uint DepotId,
+    ulong ManifestId,
+    bool Success,
+    string ErrorMessage,
+    ulong BytesDownloaded,
+    int FilesDownloaded)
+{
+    /// <summary>
+    ///     Creates a successful depot download result.
+    /// </summary>
+    public static DepotDownloadResult Succeeded(uint depotId, ulong manifestId, ulong bytesDownloaded,
+        int filesDownloaded)
+    {
+        return new DepotDownloadResult(depotId, manifestId, true, null, bytesDownloaded, filesDownloaded);
+    }
+
+    /// <summary>
+    ///     Creates a failed depot download result.
+    /// </summary>
+    public static DepotDownloadResult Failed(uint depotId, ulong manifestId, string errorMessage)
+    {
+        return new DepotDownloadResult(depotId, manifestId, false, errorMessage, 0, 0);
+    }
+
+    /// <summary>
+    ///     Creates a skipped depot download result (e.g., no access, no manifest).
+    /// </summary>
+    public static DepotDownloadResult Skipped(uint depotId, string reason)
+    {
+        return new DepotDownloadResult(depotId, 0, false, reason, 0, 0);
+    }
+}
+
+/// <summary>
+///     Result of a complete download operation, including all depot results.
+/// </summary>
+public sealed class DownloadResult
+{
+    /// <summary>
+    ///     The Steam application ID.
+    /// </summary>
+    public uint AppId { get; init; }
+
+    /// <summary>
+    ///     Results for each depot that was processed.
+    /// </summary>
+    public IReadOnlyList<DepotDownloadResult> DepotResults { get; init; } = [];
+
+    /// <summary>
+    ///     Total bytes downloaded across all depots.
+    /// </summary>
+    public ulong TotalBytesDownloaded { get; init; }
+
+    /// <summary>
+    ///     Total bytes in compressed form (network transfer).
+    /// </summary>
+    public ulong TotalBytesCompressed { get; init; }
+
+    /// <summary>
+    ///     Total files downloaded across all depots.
+    /// </summary>
+    public int TotalFilesDownloaded { get; init; }
+
+    /// <summary>
+    ///     Number of depots that downloaded successfully.
+    /// </summary>
+    public int SuccessfulDepots => DepotResults.Count(r => r.Success);
+
+    /// <summary>
+    ///     Number of depots that failed to download.
+    /// </summary>
+    public int FailedDepots => DepotResults.Count(r => !r.Success);
+
+    /// <summary>
+    ///     Whether all depots downloaded successfully.
+    /// </summary>
+    public bool AllSucceeded => DepotResults.All(r => r.Success);
+
+    /// <summary>
+    ///     Whether the download partially succeeded (some depots succeeded, some failed).
+    /// </summary>
+    public bool PartialSuccess => SuccessfulDepots > 0 && FailedDepots > 0;
+
+    /// <summary>
+    ///     Whether the download completely failed (no depots succeeded).
+    /// </summary>
+    public bool AllFailed => DepotResults.Count > 0 && SuccessfulDepots == 0;
+
+    /// <summary>
+    ///     Gets the failed depot results.
+    /// </summary>
+    public IEnumerable<DepotDownloadResult> Failures => DepotResults.Where(r => !r.Success);
+
+    /// <summary>
+    ///     Gets the successful depot results.
+    /// </summary>
+    public IEnumerable<DepotDownloadResult> Successes => DepotResults.Where(r => r.Success);
 }

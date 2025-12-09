@@ -165,19 +165,45 @@ internal class Program
                 };
             }
 
+            DownloadResult result = null;
+
             if (pubFile != SteamConstants.InvalidManifestId)
                 await client.DownloadPublishedFileAsync(appId, pubFile);
             else if (ugcId != SteamConstants.InvalidManifestId)
                 await client.DownloadUgcAsync(appId, ugcId);
             else
-                await client.DownloadAppAsync(options);
+                result = await client.DownloadAppAsync(options);
 
             progressBar?.Complete();
+
+            // Check for partial failures
+            if (result is not null && result.FailedDepots > 0)
+            {
+                var duration = DateTime.UtcNow - downloadStartTime;
+
+                if (jsonOutput)
+                {
+                    WriteJsonPartialSuccess(appId, duration, result);
+                }
+                else
+                {
+                    _userInterface.WriteLine();
+                    _userInterface.WriteError("Download completed with errors:");
+                    _userInterface.WriteError("  Successful depots: {0}", result.SuccessfulDepots);
+                    _userInterface.WriteError("  Failed depots:     {0}", result.FailedDepots);
+
+                    foreach (var failure in result.Failures)
+                        _userInterface.WriteError("    Depot {0}: {1}", failure.DepotId, failure.ErrorMessage);
+                }
+
+                // Return partial success exit code
+                return result.AllFailed ? 1 : 2;
+            }
 
             if (jsonOutput)
             {
                 var duration = DateTime.UtcNow - downloadStartTime;
-                WriteJsonSuccess(appId, duration);
+                WriteJsonSuccess(appId, duration, result);
             }
 
             return 0;
@@ -866,12 +892,37 @@ internal class Program
         JsonOutput.WriteError(message);
     }
 
-    private static void WriteJsonSuccess(uint appId, TimeSpan duration)
+    private static void WriteJsonSuccess(uint appId, TimeSpan duration, DownloadResult result)
     {
         JsonOutput.WriteSuccess(new DownloadResultJson
         {
             AppId = appId,
-            DurationSeconds = duration.TotalSeconds
+            DurationSeconds = duration.TotalSeconds,
+            TotalBytesDownloaded = result?.TotalBytesDownloaded ?? 0,
+            TotalFilesDownloaded = result?.TotalFilesDownloaded ?? 0,
+            SuccessfulDepots = result?.SuccessfulDepots ?? 0,
+            FailedDepots = result?.FailedDepots ?? 0
+        });
+    }
+
+    private static void WriteJsonPartialSuccess(uint appId, TimeSpan duration, DownloadResult result)
+    {
+        JsonOutput.WritePartialSuccess(new DownloadResultJson
+        {
+            AppId = appId,
+            DurationSeconds = duration.TotalSeconds,
+            TotalBytesDownloaded = result.TotalBytesDownloaded,
+            TotalFilesDownloaded = result.TotalFilesDownloaded,
+            SuccessfulDepots = result.SuccessfulDepots,
+            FailedDepots = result.FailedDepots,
+            Failures =
+            [
+                .. result.Failures.Select(f => new DepotFailureJson
+                {
+                    DepotId = f.DepotId,
+                    ErrorMessage = f.ErrorMessage
+                })
+            ]
         });
     }
 }

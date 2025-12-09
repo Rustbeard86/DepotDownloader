@@ -29,6 +29,7 @@ public sealed class DepotDownloadOptionsBuilder
     private bool _downloadAllLanguages;
     private bool _downloadAllPlatforms;
     private bool _downloadManifestOnly;
+    private bool _failFast;
     private string _installDirectory;
     private string _language;
     private uint? _loginId;
@@ -355,6 +356,18 @@ public sealed class DepotDownloadOptionsBuilder
     }
 
     /// <summary>
+    ///     Configures fail-fast behavior. When enabled, stops immediately on first depot failure.
+    ///     When disabled (default), continues downloading remaining depots and reports failures at the end.
+    /// </summary>
+    /// <param name="failFast">True to stop on first failure, false to continue with remaining depots.</param>
+    /// <returns>The builder instance for chaining.</returns>
+    public DepotDownloadOptionsBuilder WithFailFast(bool failFast = true)
+    {
+        _failFast = failFast;
+        return this;
+    }
+
+    /// <summary>
     ///     Sets the cancellation token for the download operation.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -434,6 +447,7 @@ public sealed class DepotDownloadOptionsBuilder
             RetryPolicy = _retryPolicy,
             MaxBytesPerSecond = _maxBytesPerSecond,
             Resume = _resume,
+            FailFast = _failFast,
             CancellationToken = _cancellationToken
         };
     }

@@ -424,7 +424,8 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
     /// <summary>
     ///     Downloads Steam app content.
     /// </summary>
-    public async Task DownloadAppAsync(
+    /// <returns>A DownloadResult containing the outcome of each depot download.</returns>
+    public async Task<DownloadResult> DownloadAppAsync(
         uint appId,
         List<(uint depotId, ulong manifestId)> depotManifestIds,
         string branch,
@@ -567,24 +568,227 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
         }
 
         var infos = new List<DepotDownloadInfo>();
+        var depotResults = new List<DepotDownloadResult>();
 
         foreach (var (depotId, manifestId) in depotManifestIds)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var info = await GetDepotInfo(depotId, appId, manifestId, branch);
+
+            var (info, errorMessage) = await GetDepotInfoWithErrorAsync(depotId, appId, manifestId, branch);
+
             if (info is not null)
+            {
                 infos.Add(info);
+            }
+            else
+            {
+                // Record the skipped depot
+                depotResults.Add(DepotDownloadResult.Skipped(depotId, errorMessage ?? "Unknown error"));
+                _userInterface?.WriteError("Depot {0}: {1}", depotId, errorMessage ?? "Unknown error");
+
+                if (Config.FailFast) throw new ContentDownloaderException($"Depot {depotId} failed: {errorMessage}");
+            }
         }
 
         _userInterface?.WriteLine();
 
+        if (infos.Count == 0)
+        {
+            _userInterface?.WriteError("No depots available for download.");
+            return new DownloadResult
+            {
+                AppId = appId,
+                DepotResults = depotResults
+            };
+        }
+
         try
         {
-            await DownloadSteam3Async(infos, progressCallback, cancellationToken).ConfigureAwait(false);
+            var downloadResults = await DownloadSteam3Async(infos, depotResults, progressCallback, cancellationToken)
+                .ConfigureAwait(false);
+            return downloadResults;
         }
         catch (OperationCanceledException)
         {
             _userInterface?.WriteLine("App {0} was not completely downloaded.", appId);
+            throw;
+        }
+    }
+
+    private async Task<DownloadResult> DownloadSteam3Async(
+        List<DepotDownloadInfo> depots,
+        List<DepotDownloadResult> existingResults,
+        DownloadProgressCallback progressCallback = null,
+        CancellationToken cancellationToken = default)
+    {
+        _userInterface?.UpdateProgress(0, 1);
+
+        await _cdnPool.UpdateServerList();
+
+        // Create a linked cancellation token source that combines external token with internal cancellation
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var downloadCounter = new GlobalDownloadCounter();
+        var depotsToDownload = new List<DepotFilesData>(depots.Count);
+        var allFileNamesAllDepots = new HashSet<string>();
+        var depotResults = new List<DepotDownloadResult>(existingResults);
+
+        // Initialize state store for resume support
+        DownloadStateStore stateStore = null;
+        if (Config.Resume && !string.IsNullOrWhiteSpace(Config.InstallDirectory))
+        {
+            stateStore = new DownloadStateStore(Config.InstallDirectory);
+            var appId = depots.FirstOrDefault()?.AppId ?? 0;
+            var branch = depots.FirstOrDefault()?.Branch ?? "public";
+            var isResuming = stateStore.LoadOrCreate(appId, branch, Config.Resume);
+
+            if (isResuming) _userInterface?.WriteLine("Resuming previous download...");
+        }
+
+        foreach (var depot in depots)
+        {
+            try
+            {
+                var depotFileData = await ProcessDepotManifestAndFiles(cts, depot, downloadCounter);
+
+                if (depotFileData is not null)
+                {
+                    depotsToDownload.Add(depotFileData);
+                    allFileNamesAllDepots.UnionWith(depotFileData.AllFileNames);
+
+                    // Initialize depot in state store
+                    stateStore?.InitializeDepot(depot.DepotId, depot.ManifestId,
+                        depotFileData.DepotCounter.CompleteDownloadSize);
+                }
+                else
+                {
+                    // Manifest processing returned null - depot was skipped (e.g., manifest-only mode)
+                    depotResults.Add(DepotDownloadResult.Succeeded(depot.DepotId, depot.ManifestId, 0, 0));
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Internal cancellation due to manifest failure
+                var errorMsg = $"Failed to download manifest for depot {depot.DepotId}";
+                depotResults.Add(DepotDownloadResult.Failed(depot.DepotId, depot.ManifestId, errorMsg));
+                _userInterface?.WriteError(errorMsg);
+
+                if (Config.FailFast)
+                    throw new ContentDownloaderException(errorMsg);
+
+                // Reset the CTS for remaining depots
+                cts.TryReset();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var errorMsg = $"Error processing depot {depot.DepotId}: {ex.Message}";
+                depotResults.Add(DepotDownloadResult.Failed(depot.DepotId, depot.ManifestId, errorMsg));
+                _userInterface?.WriteError(errorMsg);
+
+                if (Config.FailFast)
+                    throw;
+            }
+
+            cts.Token.ThrowIfCancellationRequested();
+        }
+
+        // Store the total size before it gets decremented during file processing
+        downloadCounter.TotalDownloadSize = downloadCounter.CompleteDownloadSize;
+        stateStore?.SetTotalBytes(downloadCounter.TotalDownloadSize);
+
+        // Count total files
+        downloadCounter.TotalFiles = depotsToDownload.Sum(d =>
+            d.FilteredFiles.Count(f => !f.Flags.HasFlag(EDepotFileFlag.Directory)));
+
+        if (!string.IsNullOrWhiteSpace(Config.InstallDirectory) && depotsToDownload.Count > 0)
+        {
+            var claimedFileNames = new HashSet<string>();
+
+            for (var i = depotsToDownload.Count - 1; i >= 0; i--)
+            {
+                depotsToDownload[i].FilteredFiles.RemoveAll(file => claimedFileNames.Contains(file.FileName));
+                claimedFileNames.UnionWith(depotsToDownload[i].AllFileNames);
+            }
+        }
+
+        // Start speed tracking
+        downloadCounter.StartSpeedTracking();
+
+        try
+        {
+            foreach (var depotFileData in depotsToDownload)
+                try
+                {
+                    await DepotFileDownloader.DownloadDepotFilesAsync(cts, downloadCounter, depotFileData,
+                        allFileNamesAllDepots, _cdnPool, Steam3, Config, _userInterface, stateStore, progressCallback);
+
+                    // Record success
+                    depotResults.Add(DepotDownloadResult.Succeeded(
+                        depotFileData.DepotDownloadInfo.DepotId,
+                        depotFileData.DepotDownloadInfo.ManifestId,
+                        depotFileData.DepotCounter.DepotBytesUncompressed,
+                        depotFileData.FilteredFiles.Count(f => !f.Flags.HasFlag(EDepotFileFlag.Directory))));
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Depot download failed but wasn't user-cancelled
+                    var errorMsg = $"Download failed for depot {depotFileData.DepotDownloadInfo.DepotId}";
+                    depotResults.Add(DepotDownloadResult.Failed(
+                        depotFileData.DepotDownloadInfo.DepotId,
+                        depotFileData.DepotDownloadInfo.ManifestId,
+                        errorMsg));
+                    _userInterface?.WriteError(errorMsg);
+
+                    if (Config.FailFast)
+                        throw new ContentDownloaderException(errorMsg);
+
+                    cts.TryReset();
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    var errorMsg = $"Error downloading depot {depotFileData.DepotDownloadInfo.DepotId}: {ex.Message}";
+                    depotResults.Add(DepotDownloadResult.Failed(
+                        depotFileData.DepotDownloadInfo.DepotId,
+                        depotFileData.DepotDownloadInfo.ManifestId,
+                        errorMsg));
+                    _userInterface?.WriteError(errorMsg);
+
+                    if (Config.FailFast)
+                        throw;
+                }
+
+            _userInterface?.UpdateProgress(downloadCounter.TotalDownloadSize, downloadCounter.TotalDownloadSize);
+
+            _userInterface?.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
+                downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);
+
+            // Delete state file on successful completion
+            stateStore?.Delete();
+
+            // Report summary if there were failures
+            var result = new DownloadResult
+            {
+                AppId = depots.FirstOrDefault()?.AppId ?? 0,
+                DepotResults = depotResults,
+                TotalBytesDownloaded = downloadCounter.TotalBytesUncompressed,
+                TotalBytesCompressed = downloadCounter.TotalBytesCompressed,
+                TotalFilesDownloaded = downloadCounter.FilesCompleted
+            };
+
+            if (result.FailedDepots > 0)
+            {
+                _userInterface?.WriteLine();
+                _userInterface?.WriteError("Warning: {0} of {1} depot(s) failed:",
+                    result.FailedDepots, result.DepotResults.Count);
+                foreach (var failure in result.Failures)
+                    _userInterface?.WriteError("  Depot {0}: {1}", failure.DepotId, failure.ErrorMessage);
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            // Save state on cancellation for resume
+            stateStore?.Save();
             throw;
         }
     }
@@ -625,19 +829,17 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
         return true;
     }
 
-    private async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
+    private async Task<(DepotDownloadInfo info, string errorMessage)> GetDepotInfoWithErrorAsync(
+        uint depotId, uint appId, ulong manifestId, string branch)
     {
         if (Steam3 is null)
-            throw new InvalidOperationException("Steam3 must be initialized before getting depot info.");
+            return (null, "Steam3 must be initialized before getting depot info.");
 
         if (appId != InvalidAppId)
             await Steam3.RequestAppInfo(appId);
 
         if (!await AppInfoService.AccountHasAccessAsync(Steam3, appId, depotId))
-        {
-            _userInterface?.WriteLine("Depot {0} is not available from this account.", depotId);
-            return null;
-        }
+            return (null, $"Depot {depotId} is not available from this account.");
 
         if (manifestId == InvalidManifestId)
         {
@@ -654,26 +856,17 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
             }
 
             if (manifestId == InvalidManifestId)
-            {
-                _userInterface?.WriteLine("Depot {0} missing public subsection or manifest section.", depotId);
-                return null;
-            }
+                return (null, $"Depot {depotId} missing public subsection or manifest section.");
         }
 
         await Steam3.RequestDepotKey(depotId, appId);
         if (!Steam3.DepotKeys.TryGetValue(depotId, out var depotKey))
-        {
-            _userInterface?.WriteLine("No valid depot key for {0}, unable to download.", depotId);
-            return null;
-        }
+            return (null, $"No valid depot key for {depotId}, unable to download.");
 
         var uVersion = AppInfoService.GetAppBuildNumber(Steam3, appId, branch);
 
         if (!CreateDirectories(depotId, uVersion, out var installDir))
-        {
-            _userInterface?.WriteLine("Error: Unable to create install directories!");
-            return null;
-        }
+            return (null, $"Unable to create install directories for depot {depotId}.");
 
         var containingAppId = appId;
         var proxyAppId = AppInfoService.GetDepotProxyAppId(Steam3, depotId, appId);
@@ -684,93 +877,15 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
                 containingAppId = proxyAppId;
         }
 
-        return new DepotDownloadInfo(depotId, containingAppId, manifestId, branch, installDir, depotKey);
+        return (new DepotDownloadInfo(depotId, containingAppId, manifestId, branch, installDir, depotKey), null);
     }
 
-    private async Task DownloadSteam3Async(List<DepotDownloadInfo> depots,
-        DownloadProgressCallback progressCallback = null, CancellationToken cancellationToken = default)
+    private async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
     {
-        _userInterface?.UpdateProgress(0, 1);
+        var (info, errorMessage) = await GetDepotInfoWithErrorAsync(depotId, appId, manifestId, branch);
+        if (info is null && errorMessage is not null) _userInterface?.WriteLine(errorMessage);
 
-        await _cdnPool.UpdateServerList();
-
-        // Create a linked cancellation token source that combines external token with internal cancellation
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var downloadCounter = new GlobalDownloadCounter();
-        var depotsToDownload = new List<DepotFilesData>(depots.Count);
-        var allFileNamesAllDepots = new HashSet<string>();
-
-        // Initialize state store for resume support
-        DownloadStateStore stateStore = null;
-        if (Config.Resume && !string.IsNullOrWhiteSpace(Config.InstallDirectory))
-        {
-            stateStore = new DownloadStateStore(Config.InstallDirectory);
-            var appId = depots.FirstOrDefault()?.AppId ?? 0;
-            var branch = depots.FirstOrDefault()?.Branch ?? "public";
-            var isResuming = stateStore.LoadOrCreate(appId, branch, Config.Resume);
-
-            if (isResuming) _userInterface?.WriteLine("Resuming previous download...");
-        }
-
-        foreach (var depot in depots)
-        {
-            var depotFileData = await ProcessDepotManifestAndFiles(cts, depot, downloadCounter);
-
-            if (depotFileData is not null)
-            {
-                depotsToDownload.Add(depotFileData);
-                allFileNamesAllDepots.UnionWith(depotFileData.AllFileNames);
-
-                // Initialize depot in state store
-                stateStore?.InitializeDepot(depot.DepotId, depot.ManifestId,
-                    depotFileData.DepotCounter.CompleteDownloadSize);
-            }
-
-            cts.Token.ThrowIfCancellationRequested();
-        }
-
-        // Store the total size before it gets decremented during file processing
-        downloadCounter.TotalDownloadSize = downloadCounter.CompleteDownloadSize;
-        stateStore?.SetTotalBytes(downloadCounter.TotalDownloadSize);
-
-        // Count total files
-        downloadCounter.TotalFiles = depotsToDownload.Sum(d =>
-            d.FilteredFiles.Count(f => !f.Flags.HasFlag(EDepotFileFlag.Directory)));
-
-        if (!string.IsNullOrWhiteSpace(Config.InstallDirectory) && depotsToDownload.Count > 0)
-        {
-            var claimedFileNames = new HashSet<string>();
-
-            for (var i = depotsToDownload.Count - 1; i >= 0; i--)
-            {
-                depotsToDownload[i].FilteredFiles.RemoveAll(file => claimedFileNames.Contains(file.FileName));
-                claimedFileNames.UnionWith(depotsToDownload[i].AllFileNames);
-            }
-        }
-
-        // Start speed tracking
-        downloadCounter.StartSpeedTracking();
-
-        try
-        {
-            foreach (var depotFileData in depotsToDownload)
-                await DepotFileDownloader.DownloadDepotFilesAsync(cts, downloadCounter, depotFileData,
-                    allFileNamesAllDepots, _cdnPool, Steam3, Config, _userInterface, stateStore, progressCallback);
-
-            _userInterface?.UpdateProgress(downloadCounter.TotalDownloadSize, downloadCounter.TotalDownloadSize);
-
-            _userInterface?.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
-                downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);
-
-            // Delete state file on successful completion
-            stateStore?.Delete();
-        }
-        catch (OperationCanceledException)
-        {
-            // Save state on cancellation for resume
-            stateStore?.Save();
-            throw;
-        }
+        return info;
     }
 
     private async Task<DepotFilesData> ProcessDepotManifestAndFiles(CancellationTokenSource cts,
