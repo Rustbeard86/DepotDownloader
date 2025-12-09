@@ -158,6 +158,17 @@ public sealed class DepotDownloaderClient : IDisposable
     }
 
     /// <summary>
+    ///     Disconnects from Steam and clears cached data.
+    ///     Call this to explicitly end a session before starting a new one,
+    ///     or to free resources without disposing the entire client.
+    /// </summary>
+    public void Logout()
+    {
+        ThrowIfDisposed();
+        _downloader.ShutdownSteam3();
+    }
+
+    /// <summary>
     ///     Gets information about a Steam application.
     /// </summary>
     /// <param name="appId">The Steam application ID.</param>

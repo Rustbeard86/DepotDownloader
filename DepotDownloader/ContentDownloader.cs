@@ -73,7 +73,7 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
             return;
 
         _logger.DisposingContentDownloader();
-        Steam3?.Disconnect();
+        ShutdownSteam3();
         _disposed = true;
     }
 
@@ -83,6 +83,14 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
     public bool InitializeSteam3(string username, string password)
     {
         _logger.InitializingSteam3(username ?? "(anonymous)");
+
+        // Shutdown any existing session before creating a new one
+        if (Steam3 is not null)
+        {
+            _logger.ShuttingDownSteam3();
+            Steam3.Disconnect();
+            Steam3 = null;
+        }
 
         string loginToken = null;
 
@@ -118,11 +126,17 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
 
     /// <summary>
     ///     Shuts down the Steam3 session and clears caches.
+    ///     Called automatically by Dispose, but can be called explicitly 
+    ///     to clean up before reconnection or when reusing the downloader.
     /// </summary>
     public void ShutdownSteam3()
     {
+        if (Steam3 is null)
+            return;
+            
         _logger.ShuttingDownSteam3();
-        Steam3?.Disconnect();
+        Steam3.Disconnect();
+        Steam3 = null;
         AppInfoService.ClearCache();
     }
 
