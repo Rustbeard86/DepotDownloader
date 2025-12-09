@@ -119,6 +119,7 @@ public static class ContentDownloader
     public static void ShutdownSteam3()
     {
         _steam3?.Disconnect();
+        AppInfoService.ClearCache();
     }
 
     private static async Task ProcessPublishedFileAsync(uint appId, ulong publishedFileId,
