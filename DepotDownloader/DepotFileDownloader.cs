@@ -161,7 +161,7 @@ internal static class DepotFileDownloader
             {
                 if (chunk.ChunkID is null) continue;
 
-                var chunkId = Convert.ToHexString(chunk.ChunkID).ToLowerInvariant();
+                var chunkId = Convert.ToHexStringLower(chunk.ChunkID);
                 if (stateStore is not null && stateStore.IsChunkComplete(depot.DepotId, chunkId))
                 {
                     // Chunk already downloaded, skip it
@@ -355,7 +355,7 @@ internal static class DepotFileDownloader
 
         if (chunk.ChunkID is null) return;
 
-        var chunkId = Convert.ToHexString(chunk.ChunkID).ToLowerInvariant();
+        var chunkId = Convert.ToHexStringLower(chunk.ChunkID);
 
         // Skip if already downloaded (resume support)
         if (stateStore is not null && stateStore.IsChunkComplete(depot.DepotId, chunkId))

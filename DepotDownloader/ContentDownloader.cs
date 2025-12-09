@@ -309,7 +309,7 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
             if (!FileFilter.TestIsFileIncluded(file.FileName, Config))
                 continue;
 
-            var hash = Convert.ToHexString(file.FileHash).ToLowerInvariant();
+            var hash = Convert.ToHexStringLower(file.FileHash);
             files.Add(new FileDownloadInfo(file.FileName, file.TotalSize, hash));
             totalSize += file.TotalSize;
         }
@@ -1000,7 +1000,7 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
 
         foreach (var file in manifest.Files)
         {
-            var sha1Hash = Convert.ToHexString(file.FileHash).ToLower();
+            var sha1Hash = Convert.ToHexStringLower(file.FileHash);
             sw.WriteLine(
                 $"{file.TotalSize,14:d} {file.Chunks.Count,6:d} {sha1Hash} {(int)file.Flags,5:x} {file.FileName}");
         }

@@ -251,8 +251,6 @@ internal class Steam3Session
         _logger.RequestingDepotKey(depotId, appid);
 
         var depotKey = await _steamApps.GetDepotDecryptionKey(depotId, appid);
-        Console.WriteLine($"Depot ID: {depotKey.DepotID}");
-        Console.WriteLine($"DecryptionKey: {BitConverter.ToString(depotKey.DepotKey).Replace("-", "").ToLower()}");
 
         _logger.GotDepotKey(depotKey.DepotID, depotKey.Result);
         _userInterface.WriteLine("Got depot key for {0} result: {1}", depotKey.DepotID, depotKey.Result);
