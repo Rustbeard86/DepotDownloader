@@ -119,3 +119,6 @@ cryptopp/
 # misc
 Thumbs.db
 launchSettings.json
+
+# Internal documentation
+LIBRARY_REFACTORING.md
