@@ -335,12 +335,84 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 | `-json` | Output results in JSON format for scripting/automation |
 | `-no-progress` | Disable the progress bar during downloads |
 
+#### Configuration
+
+| Parameter | Description |
+|-----------|-------------|
+| `-config <file>` | Load settings from JSON configuration file (CLI args override) |
+
 #### Other
 
 | Parameter | Description |
 |-----------|-------------|
 | `-debug` | Enable verbose debug logging |
 | `-V`, `--version` | Print version information |
+
+---
+
+### Configuration File
+
+You can use a JSON configuration file to store commonly used settings. CLI arguments always override config file values.
+
+**Example `config.json`:**
+
+```json
+{
+  "app": 730,
+  "username": "myaccount",
+  "rememberPassword": true,
+  "branch": "public",
+  "dir": "C:\\Games\\CS2",
+  "os": "windows",
+  "osarch": "64",
+  "language": "english",
+  "maxDownloads": 8,
+  "validate": true,
+  "depots": [731, 732],
+  "manifests": [7617088375292372759, 7617088375292372760]
+}
+```
+
+**Usage:**
+
+```powershell
+# Use config file
+./DepotDownloader -config config.json
+
+# Override specific settings from config
+./DepotDownloader -config config.json -branch beta -dir "C:\Games\CS2-Beta"
+```
+
+**Available config options:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `app` | number | Steam AppID |
+| `username` | string | Steam username |
+| `rememberPassword` | boolean | Save credentials |
+| `qr` | boolean | Use QR code login |
+| `noMobile` | boolean | Prefer 2FA code |
+| `branch` | string | Branch name |
+| `branchPassword` | string | Branch password |
+| `depots` | number[] | Depot IDs |
+| `manifests` | number[] | Manifest IDs |
+| `os` | string | Target OS |
+| `osarch` | string | Target architecture |
+| `language` | string | Target language |
+| `allPlatforms` | boolean | Download all platforms |
+| `allArchs` | boolean | Download all architectures |
+| `allLanguages` | boolean | Download all languages |
+| `lowViolence` | boolean | Include low-violence |
+| `dir` | string | Install directory |
+| `filelist` | string | Path to filelist |
+| `validate` | boolean | Verify existing files |
+| `manifestOnly` | boolean | Download manifest only |
+| `maxDownloads` | number | Concurrent downloads |
+| `cellId` | number | Cell ID override |
+| `loginId` | number | Login ID |
+| `useLancache` | boolean | Use Lancache |
+| `skipDiskCheck` | boolean | Skip disk check |
+| `debug` | boolean | Enable debug logging |
 
 ---
 
@@ -534,6 +606,68 @@ The `DownloadProgressEventArgs` provides:
 - `EstimatedTimeRemaining` - Estimated time remaining
 
 ### Download Options
+
+You can create download options directly or use the fluent builder pattern:
+
+**Direct instantiation:**
+
+```csharp
+var options = new DepotDownloadOptions
+{
+    AppId = 730,
+    Branch = "public",
+    InstallDirectory = @"C:\Games\CS2"
+};
+```
+
+**Fluent builder (recommended):**
+
+```csharp
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .FromBranch("public")
+    .ToDirectory(@"C:\Games\CS2")
+    .WithDepot(731)
+    .ForOs("windows")
+    .ForArchitecture("64")
+    .ForLanguage("english")
+    .WithMaxConcurrency(8)
+    .WithVerification()
+    .IncludeFilesMatching(@"\.dll$")
+    .WithCancellation(cancellationToken)
+    .Build();
+
+await client.DownloadAppAsync(options);
+```
+
+**Builder methods:**
+
+| Method | Description |
+|--------|-------------|
+| `ForApp(appId)` | Set the Steam AppID (required) |
+| `WithDepot(depotId, manifestId)` | Add a specific depot to download |
+| `FromBranch(branch, password)` | Set branch and optional password |
+| `ToDirectory(path)` | Set installation directory |
+| `ForOs(os)` | Target specific OS (windows/linux/macos) |
+| `ForArchitecture(arch)` | Target specific architecture (32/64) |
+| `ForLanguage(lang)` | Target specific language |
+| `ForAllPlatforms()` | Download all platform depots |
+| `ForAllArchitectures()` | Download all architecture depots |
+| `ForAllLanguages()` | Download all language depots |
+| `IncludeLowViolence()` | Include low-violence depots |
+| `IncludeFile(path)` | Add specific file to download |
+| `IncludeFiles(paths)` | Add multiple files to download |
+| `IncludeFilesMatching(regex)` | Add regex pattern for file matching |
+| `WithMaxConcurrency(n)` | Set concurrent downloads (1-64) |
+| `WithVerification()` | Verify existing files |
+| `ManifestOnly()` | Download manifest metadata only |
+| `WithCellId(id)` | Override content server CellID |
+| `WithLoginId(id)` | Set login ID for concurrent instances |
+| `VerifyDiskSpace(bool)` | Enable/disable disk space check |
+| `WithCancellation(token)` | Set cancellation token |
+| `Build()` | Create the options (throws if AppId not set) |
+
+**Full options reference:**
 
 ```csharp
 var options = new DepotDownloadOptions
