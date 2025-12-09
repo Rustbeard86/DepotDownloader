@@ -93,3 +93,55 @@ public record DiskSpaceCheckResult(
     ulong RequiredBytes,
     ulong AvailableBytes,
     string TargetDrive);
+
+/// <summary>
+///     Exception thrown when there is insufficient disk space for a download.
+/// </summary>
+public class InsufficientDiskSpaceException(ulong requiredBytes, ulong availableBytes, string targetDrive)
+    : Exception(FormatMessage(requiredBytes, availableBytes, targetDrive))
+{
+    /// <summary>
+    ///     The number of bytes required for the download.
+    /// </summary>
+    public ulong RequiredBytes { get; } = requiredBytes;
+
+    /// <summary>
+    ///     The number of bytes available on the target drive.
+    /// </summary>
+    public ulong AvailableBytes { get; } = availableBytes;
+
+    /// <summary>
+    ///     The drive or mount point that lacks space.
+    /// </summary>
+    public string TargetDrive { get; } = targetDrive;
+
+    /// <summary>
+    ///     The number of additional bytes needed.
+    /// </summary>
+    public ulong ShortfallBytes => RequiredBytes - AvailableBytes;
+
+    private static string FormatMessage(ulong requiredBytes, ulong availableBytes, string targetDrive)
+    {
+        var required = FormatSize(requiredBytes);
+        var available = FormatSize(availableBytes);
+        var shortfall = FormatSize(requiredBytes - availableBytes);
+
+        return
+            $"Insufficient disk space on {targetDrive}. Required: {required}, Available: {available}, Need additional: {shortfall}";
+    }
+
+    private static string FormatSize(ulong bytes)
+    {
+        string[] sizes = ["B", "KB", "MB", "GB", "TB"];
+        var order = 0;
+        double size = bytes;
+
+        while (size >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            size /= 1024;
+        }
+
+        return $"{size:0.##} {sizes[order]}";
+    }
+}

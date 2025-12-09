@@ -397,6 +397,7 @@ internal static class DepotFileDownloader
                 userInterface?.WriteLine("Failed to find any server with chunk {0} for depot {1}. Aborting.",
                     chunkId,
                     depot.DepotId);
+                // ReSharper disable once MethodHasAsyncOverload
                 cts.Cancel();
             }
 
@@ -429,6 +430,7 @@ internal static class DepotFileDownloader
         var remainingChunks = Interlocked.Decrement(ref fileStreamData.ChunksToDownload);
         if (remainingChunks == 0)
         {
+            // ReSharper disable once MethodHasAsyncOverload
             fileStreamData.FileStream?.Dispose();
             fileStreamData.FileLock.Dispose();
         }

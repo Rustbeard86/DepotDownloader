@@ -259,9 +259,11 @@ public sealed class DepotDownloaderClient : IDisposable
     /// <exception cref="ArgumentNullException">When options is null.</exception>
     /// <exception cref="ArgumentException">When AppId is not specified.</exception>
     /// <exception cref="ContentDownloaderException">When download fails.</exception>
+    /// <exception cref="InsufficientDiskSpaceException">When there is not enough disk space and VerifyDiskSpace is true.</exception>
     public async Task DownloadAppAsync(DepotDownloadOptions options)
     {
         ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
         ArgumentNullException.ThrowIfNull(options);
 
         if (options.AppId == ContentDownloader.InvalidAppId)
@@ -269,6 +271,19 @@ public sealed class DepotDownloaderClient : IDisposable
 
         // Apply configuration from options
         ApplyConfiguration(options);
+
+        // Check disk space if enabled
+        if (options.VerifyDiskSpace && !options.DownloadManifestOnly)
+        {
+            var spaceCheck = await CheckDiskSpaceAsync(options);
+            if (!spaceCheck.HasSufficientSpace)
+            {
+                throw new InsufficientDiskSpaceException(
+                    spaceCheck.RequiredBytes,
+                    spaceCheck.AvailableBytes,
+                    spaceCheck.TargetDrive);
+            }
+        }
 
         // Perform download
         await ContentDownloader.DownloadAppAsync(

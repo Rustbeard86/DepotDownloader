@@ -721,6 +721,7 @@ public static class ContentDownloader
                                 depot.DepotId, depot.AppId, depot.ManifestId, depot.Branch);
                             manifestRequestCodeExpiration = now.Add(TimeSpan.FromMinutes(5));
 
+                            // ReSharper disable once MethodHasAsyncOverload
                             if (manifestRequestCode == 0) cts.Cancel();
                         }
 
@@ -786,6 +787,7 @@ public static class ContentDownloader
                 {
                     _userInterface?.WriteLine("\nUnable to download manifest {0} for depot {1}", depot.ManifestId,
                         depot.DepotId);
+                    // ReSharper disable once MethodHasAsyncOverload
                     cts.Cancel();
                 }
 

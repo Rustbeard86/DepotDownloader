@@ -103,4 +103,9 @@ public sealed class DepotDownloadOptions
     ///     Download depots for all languages.
     /// </summary>
     public bool DownloadAllLanguages { get; set; }
+
+    /// <summary>
+    ///     Verify disk space before downloading. Default is true.
+    /// </summary>
+    public bool VerifyDiskSpace { get; set; } = true;
 }
