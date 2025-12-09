@@ -28,7 +28,7 @@ This document provides a complete overview of all features in DepotDownloader an
 | Platform filtering (`-os`, `-osarch`, `-language`, `-all-*`) | ? | ? | ? |
 | Download control (`-max-downloads`, `-max-speed`, `-retries`) | ? | ? | ? |
 | Error handling (`-fail-fast`) | ? | ? | ? |
-| Resume support (`-resume`) | ? | ? | ? |
+| Resume support (`-no-resume` to disable, enabled by default) | ? | ? | ? |
 | Disk space checking (`-check-space`, `-skip-disk-check`) | ? | ? | ? |
 | File filtering (`-filelist`, regex support) | ? | ? | ? |
 | Validation (`-validate`) | ? | ? | ? |

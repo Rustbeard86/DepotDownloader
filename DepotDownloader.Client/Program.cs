@@ -102,7 +102,7 @@ internal class Program
         var verbose = HasParameter(args, "-verbose") || HasParameter(args, "-v");
         var jsonOutput = HasParameter(args, "-json") || HasParameter(args, "--json");
         var noProgress = HasParameter(args, "-no-progress") || HasParameter(args, "--no-progress");
-        var resume = HasParameter(args, "-resume") || HasParameter(args, "--resume");
+        var noResume = HasParameter(args, "-no-resume") || HasParameter(args, "--no-resume");
         var failFast = HasParameter(args, "-fail-fast") || HasParameter(args, "--fail-fast");
 
         var pubFile = GetParameter(args, "-pubfile", SteamConstants.InvalidManifestId);
@@ -113,7 +113,7 @@ internal class Program
         if (!listDepots && !listBranches && !getManifest)
         {
             options = await BuildDownloadOptionsAsync(args, appId);
-            options.Resume = resume;
+            options.Resume = !noResume; // Resume by default
             options.FailFast = failFast;
         }
 
@@ -728,8 +728,16 @@ internal class Program
         var maxSpeedMbps = GetParameter<double?>(args, "-max-speed");
         if (maxSpeedMbps.HasValue)
         {
-            options.MaxBytesPerSecond = (long)(maxSpeedMbps.Value * 1024 * 1024);
-            _userInterface.WriteLine("Speed limit: {0:F1} MB/s", maxSpeedMbps.Value);
+            if (maxSpeedMbps.Value <= 0)
+            {
+                options.MaxBytesPerSecond = null; // Unlimited
+                _userInterface.WriteLine("Speed limit: unlimited");
+            }
+            else
+            {
+                options.MaxBytesPerSecond = (long)(maxSpeedMbps.Value * 1024 * 1024);
+                _userInterface.WriteLine("Speed limit: {0:F1} MB/s", maxSpeedMbps.Value);
+            }
         }
 
         // Retry configuration
@@ -1020,7 +1028,7 @@ internal class Program
         _userInterface.WriteLine(
             "  -max-downloads <#>       - maximum number of chunks to download concurrently. (default: 8).");
         _userInterface.WriteLine(
-            "  -max-speed <#>           - maximum download speed in MB/s (e.g., -max-speed 10 for 10 MB/s).");
+            "  -max-speed <#>           - maximum download speed in MB/s (0 for unlimited, e.g., -max-speed 10 for 10 MB/s).");
         _userInterface.WriteLine(
             "  -retries <#>             - maximum retry attempts per chunk (default: 5, use 0 to disable).");
         _userInterface.WriteLine(
@@ -1032,7 +1040,7 @@ internal class Program
         _userInterface.WriteLine(
             "  -skip-disk-check         - skip disk space verification before downloading.");
         _userInterface.WriteLine(
-            "  -resume                  - resume a previously interrupted download.");
+            "  -no-resume               - disable automatic resume of interrupted downloads (resume is enabled by default).");
         _userInterface.WriteLine();
         _userInterface.WriteLine("  -config <file.json>      - load settings from a JSON configuration file.");
         _userInterface.WriteLine("                             CLI arguments override config file settings.");

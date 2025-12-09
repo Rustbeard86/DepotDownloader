@@ -113,6 +113,9 @@ Download a specific depot:
 # Limit download speed to 10 MB/s
 ./DepotDownloader -app 730 -max-speed 10
 
+# Unlimited speed (default behavior)
+./DepotDownloader -app 730 -max-speed 0
+
 # Configure retry attempts (0 disables retries)
 ./DepotDownloader -app 730 -retries 10
 
@@ -121,6 +124,9 @@ Download a specific depot:
 
 # Resume a previously interrupted download
 ./DepotDownloader -app 730 -dir "C:\Games\CS2" -resume
+
+# Disable resume (resume is enabled by default)
+./DepotDownloader -app 730 -no-resume
 ```
 
 ### Download Workshop Items
@@ -228,7 +234,7 @@ Summary:
 Estimated download time:
   At 10 MB/s:  25 min 30 sec
   At 50 MB/s:  5 min 6 sec
-  At 100 MB/s: 2 min 33 sec
+  At 100 MB/s:  2 min 33 sec
 
 To download, run the same command without --dry-run
 ```
@@ -395,13 +401,13 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 | `-validate` | Verify checksums of existing files |
 | `-manifest-only` | Download manifest metadata only |
 | `-max-downloads <#>` | Concurrent downloads (default: 8) |
-| `-max-speed <#>` | Maximum download speed in MB/s |
+| `-max-speed <#>` | Maximum download speed in MB/s (0 or negative for unlimited) |
 | `-retries <#>` | Maximum retry attempts per chunk (default: 5, use 0 to disable) |
 | `-fail-fast` | Stop immediately on first depot failure |
 | `-cellid <#>` | Override content server CellID |
 | `-use-lancache` | Route downloads through Lancache |
 | `-skip-disk-check` | Skip disk space verification before downloading |
-| `-resume` | Resume a previously interrupted download |
+| `-resume` | Resume a previously interrupted download (enabled by default, use `-no-resume` to disable) |
 
 #### Discovery & Planning
 
@@ -790,9 +796,9 @@ await client.DownloadAppAsync(options);
 | `WithRetryPolicy(policy)` | Set retry policy for failed downloads |
 | `WithRetry(maxRetries, initialDelay, maxDelay)` | Configure custom retry behavior |
 | `WithNoRetry()` | Disable retries |
-| `WithMaxSpeed(bytesPerSecond)` | Set max download speed in MB/s |
-| `WithMaxSpeedMbps(mbPerSecond)` | Set max download speed in MB/s |
-| `WithResume(enable)` | Enable resume support for interrupted downloads |
+| `WithMaxSpeed(bytesPerSecond)` | Set max download speed (bytes/sec, 0 for unlimited) |
+| `WithMaxSpeedMbps(mbPerSecond)` | Set max download speed (MB/s, 0 for unlimited) |
+| `WithResume(enable)` | Enable/disable resume support (default: true) |
 | `WithFailFast(enable)` | Stop on first depot failure (default: continue) |
 | `Build()` | Create the options (throws if AppId not set) |
 
@@ -821,16 +827,22 @@ var options = DepotDownloadOptionsBuilder.Create()
 
 **Resume Support:**
 ```csharp
-// Enable resume for large downloads that may be interrupted
+// Resume is enabled by default - interrupted downloads continue automatically
 var options = DepotDownloadOptionsBuilder.Create()
     .ForApp(730)
     .ToDirectory(@"C:\Games\CS2")
-    .WithResume()
     .Build();
 
 // If download is interrupted (cancelled, crashed, network error),
 // run again with the same options to continue where it left off
 await client.DownloadAppAsync(options);
+
+// Disable resume if needed
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .ToDirectory(@"C:\Games\CS2")
+    .WithResume(false)
+    .Build();
 ```
 
 **Fail-Fast Mode:**
@@ -862,10 +874,10 @@ var options = DepotDownloadOptionsBuilder.Create()
     .WithMaxSpeedMbps(10)
     .Build();
 
-// Or in bytes per second
+// Unlimited (pass 0 or null)
 var options = DepotDownloadOptionsBuilder.Create()
     .ForApp(730)
-    .WithMaxSpeed(10 * 1024 * 1024) // 10 MB/s
+    .WithMaxSpeedMbps(0)  // Unlimited
     .Build();
 ```
 
@@ -932,11 +944,11 @@ var options = new DepotDownloadOptions
     
     // Retry and throttling
     RetryPolicy = RetryPolicy.Default,    // exponential backoff with 5 retries
-    MaxBytesPerSecond = null,             // null = unlimited
+    MaxBytesPerSecond = null,             // null = unlimited (or 0)
     
     // Resume support
-    Resume = false,                       // set to true to enable resume
-    
+    Resume = true,                        // enabled by default
+
     // File filtering
     FilesToDownload = new HashSet<string>
     {
@@ -1158,6 +1170,9 @@ options.FailFast = true;
 ```powershell
 # CLI - limit to 10 MB/s
 ./DepotDownloader -app 730 -max-speed 10
+
+# Unlimited (default)
+./DepotDownloader -app 730 -max-speed 0
 ```
 
 ```csharp
@@ -1165,6 +1180,12 @@ options.FailFast = true;
 var options = DepotDownloadOptionsBuilder.Create()
     .ForApp(730)
     .WithMaxSpeedMbps(10)
+    .Build();
+
+// Unlimited (pass 0 or null)
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .WithMaxSpeedMbps(0)  // Unlimited
     .Build();
 ```
 
@@ -1191,6 +1212,35 @@ if (manifestId.HasValue)
     Console.WriteLine($"Latest manifest: {manifestId.Value}");
 }
 ```
+
+### How do I resume an interrupted download?
+
+Downloads automatically resume by default. Just run the same command again:
+
+```powershell
+# CLI - resume happens automatically
+./DepotDownloader -app 730 -dir "C:\Games\CS2"
+# If interrupted, run the same command again to continue
+
+# Disable resume if needed
+./DepotDownloader -app 730 -dir "C:\Games\CS2" -no-resume
+```
+
+```csharp
+// Library - resume is enabled by default
+var options = new DepotDownloadOptions
+{
+    AppId = 730,
+    InstallDirectory = @"C:\Games\CS2",
+    Resume = true  // This is the default
+};
+await client.DownloadAppAsync(options);
+
+// If interrupted, run again to continue
+await client.DownloadAppAsync(options);
+```
+
+Note: Resume requires an install directory to be set. The download state is stored in a `.DepotDownloader` folder within the install directory.
 
 ---
 
