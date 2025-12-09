@@ -53,14 +53,28 @@ internal static class DepotFileDownloader
             ProcessDepotFile(cts, downloadCounter, depotFilesData, file, networkChunkQueue, config, userInterface);
         });
 
-        await Parallel.ForEachAsync(networkChunkQueue, parallelOptions, async (q, _) =>
+        // Create speed limiter if configured
+        SpeedLimiter speedLimiter = null;
+        if (config.MaxBytesPerSecond is > 0)
         {
-            await DownloadChunkAsync(
-                cts, downloadCounter, depotFilesData,
-                q.fileData, q.fileStreamData, q.chunk,
-                cdnPool, steam3, userInterface, progressCallback
-            );
-        });
+            speedLimiter = new SpeedLimiter(config.MaxBytesPerSecond.Value);
+        }
+
+        try
+        {
+            await Parallel.ForEachAsync(networkChunkQueue, parallelOptions, async (q, _) =>
+            {
+                await DownloadChunkAsync(
+                    cts, downloadCounter, depotFilesData,
+                    q.fileData, q.fileStreamData, q.chunk,
+                    cdnPool, steam3, config, userInterface, speedLimiter, progressCallback
+                );
+            });
+        }
+        finally
+        {
+            speedLimiter?.Dispose();
+        }
 
         // Check for deleted files if updating the depot.
         if (depotFilesData.PreviousManifest is { Files: not null })
@@ -289,7 +303,7 @@ internal static class DepotFileDownloader
     }
 
     /// <summary>
-    ///     Downloads a single chunk from the CDN.
+    ///     Downloads a single chunk from the CDN with retry support and speed limiting.
     /// </summary>
     private static async Task DownloadChunkAsync(
         CancellationTokenSource cts,
@@ -300,13 +314,16 @@ internal static class DepotFileDownloader
         DepotManifest.ChunkData chunk,
         CdnClientPool cdnPool,
         Steam3Session steam3,
+        DownloadConfig config,
         IUserInterface userInterface,
+        SpeedLimiter speedLimiter,
         DownloadProgressCallback progressCallback = null)
     {
         cts.Token.ThrowIfCancellationRequested();
 
         var depot = depotFilesData.DepotDownloadInfo;
         var depotDownloadCounter = depotFilesData.DepotCounter;
+        var retryPolicy = config.RetryPolicy ?? RetryPolicy.Default;
 
         if (chunk.ChunkID is null) return;
 
@@ -314,6 +331,7 @@ internal static class DepotFileDownloader
 
         var written = 0;
         var chunkBuffer = ArrayPool<byte>.Shared.Rent((int)chunk.UncompressedLength);
+        var retryAttempt = 0;
 
         try
         {
@@ -337,6 +355,13 @@ internal static class DepotFileDownloader
 
                     DebugLog.WriteLine("DepotFileDownloader", "Downloading chunk {0} from {1} with {2}", chunkId,
                         connection, cdnPool.ProxyServer is not null ? cdnPool.ProxyServer : "no proxy");
+                    
+                    // Apply speed limiting before download
+                    if (speedLimiter is not null)
+                    {
+                        await speedLimiter.WaitAsync((int)chunk.CompressedLength, cts.Token);
+                    }
+                    
                     written = await cdnPool.CdnClient.DownloadDepotChunkAsync(
                         depot.DepotId,
                         chunk,
@@ -391,6 +416,23 @@ internal static class DepotFileDownloader
                     cdnPool.ReturnBrokenConnection(connection);
                     userInterface?.WriteLine("Encountered unexpected error downloading chunk {0}: {1}", chunkId,
                         e.Message);
+                }
+
+                // Apply retry policy
+                if (written == 0 && retryAttempt < retryPolicy.MaxRetries)
+                {
+                    var delay = retryPolicy.GetDelay(retryAttempt);
+                    userInterface?.WriteLine("Retry {0}/{1} for chunk {2} after {3:F1}s", 
+                        retryAttempt + 1, retryPolicy.MaxRetries, chunkId, delay.TotalSeconds);
+                    
+                    await Task.Delay(delay, cts.Token);
+                    retryAttempt++;
+                }
+                else if (written == 0 && retryAttempt >= retryPolicy.MaxRetries)
+                {
+                    userInterface?.WriteLine("Max retries ({0}) exceeded for chunk {1}", 
+                        retryPolicy.MaxRetries, chunkId);
+                    break;
                 }
             } while (written == 0);
 

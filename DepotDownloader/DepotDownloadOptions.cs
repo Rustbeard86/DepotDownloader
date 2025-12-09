@@ -111,6 +111,18 @@ public sealed class DepotDownloadOptions
     public bool VerifyDiskSpace { get; set; } = true;
 
     /// <summary>
+    ///     Retry policy for failed chunk downloads.
+    ///     Default uses exponential backoff with 5 retries.
+    /// </summary>
+    public RetryPolicy RetryPolicy { get; set; } = RetryPolicy.Default;
+
+    /// <summary>
+    ///     Maximum download speed in bytes per second.
+    ///     Null or 0 means unlimited. Default is unlimited.
+    /// </summary>
+    public long? MaxBytesPerSecond { get; set; }
+
+    /// <summary>
     ///     Cancellation token for graceful cancellation of download operations.
     ///     Allows GUI applications and services to cancel downloads.
     /// </summary>

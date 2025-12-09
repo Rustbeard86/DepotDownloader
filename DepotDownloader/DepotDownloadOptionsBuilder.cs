@@ -32,6 +32,8 @@ public sealed class DepotDownloadOptionsBuilder
     private string _os;
     private bool _verifyAll;
     private bool _verifyDiskSpace = true;
+    private RetryPolicy _retryPolicy = RetryPolicy.Default;
+    private long? _maxBytesPerSecond;
 
     /// <summary>
     ///     Sets the Steam AppID to download.
@@ -279,6 +281,62 @@ public sealed class DepotDownloadOptionsBuilder
     }
 
     /// <summary>
+    ///     Sets the retry policy for failed chunk downloads.
+    /// </summary>
+    /// <param name="policy">The retry policy to use.</param>
+    /// <returns>The builder instance for chaining.</returns>
+    public DepotDownloadOptionsBuilder WithRetryPolicy(RetryPolicy policy)
+    {
+        _retryPolicy = policy ?? RetryPolicy.Default;
+        return this;
+    }
+
+    /// <summary>
+    ///     Configures retry behavior with custom settings.
+    /// </summary>
+    /// <param name="maxRetries">Maximum retry attempts per chunk.</param>
+    /// <param name="initialDelay">Initial delay before first retry.</param>
+    /// <param name="maxDelay">Maximum delay between retries.</param>
+    /// <returns>The builder instance for chaining.</returns>
+    public DepotDownloadOptionsBuilder WithRetry(int maxRetries, TimeSpan? initialDelay = null, TimeSpan? maxDelay = null)
+    {
+        _retryPolicy = RetryPolicy.Create(maxRetries, initialDelay, maxDelay);
+        return this;
+    }
+
+    /// <summary>
+    ///     Disables retries - fail immediately on first error.
+    /// </summary>
+    /// <returns>The builder instance for chaining.</returns>
+    public DepotDownloadOptionsBuilder WithNoRetry()
+    {
+        _retryPolicy = RetryPolicy.None;
+        return this;
+    }
+
+    /// <summary>
+    ///     Sets the maximum download speed.
+    /// </summary>
+    /// <param name="bytesPerSecond">Maximum bytes per second, or null for unlimited.</param>
+    /// <returns>The builder instance for chaining.</returns>
+    public DepotDownloadOptionsBuilder WithMaxSpeed(long? bytesPerSecond)
+    {
+        _maxBytesPerSecond = bytesPerSecond;
+        return this;
+    }
+
+    /// <summary>
+    ///     Sets the maximum download speed in megabytes per second.
+    /// </summary>
+    /// <param name="mbPerSecond">Maximum MB/s, or null for unlimited.</param>
+    /// <returns>The builder instance for chaining.</returns>
+    public DepotDownloadOptionsBuilder WithMaxSpeedMbps(double? mbPerSecond)
+    {
+        _maxBytesPerSecond = mbPerSecond.HasValue ? (long)(mbPerSecond.Value * 1024 * 1024) : null;
+        return this;
+    }
+
+    /// <summary>
     ///     Sets the cancellation token for the download operation.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -297,7 +355,7 @@ public sealed class DepotDownloadOptionsBuilder
     public DepotDownloadOptions Build()
     {
         if (_appId == SteamConstants.InvalidAppId)
-            throw new ArgumentException("AppId must be specified. Use ForApp() to set it.");
+            throw new System.ArgumentException("AppId must be specified. Use ForApp() to set it.");
 
         return new DepotDownloadOptions
         {
@@ -321,6 +379,8 @@ public sealed class DepotDownloadOptionsBuilder
             DownloadAllArchs = _downloadAllArchs,
             DownloadAllLanguages = _downloadAllLanguages,
             VerifyDiskSpace = _verifyDiskSpace,
+            RetryPolicy = _retryPolicy,
+            MaxBytesPerSecond = _maxBytesPerSecond,
             CancellationToken = _cancellationToken
         };
     }

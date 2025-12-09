@@ -30,4 +30,8 @@ public class DownloadConfig
     public bool DownloadManifestOnly { get; set; }
     public bool VerifyAll { get; set; }
     public int MaxDownloads { get; set; }
+
+    // Retry and throttling
+    public RetryPolicy RetryPolicy { get; set; } = RetryPolicy.Default;
+    public long? MaxBytesPerSecond { get; set; }
 }

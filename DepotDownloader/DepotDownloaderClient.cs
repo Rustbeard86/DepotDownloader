@@ -385,6 +385,8 @@ public sealed class DepotDownloaderClient : IDisposable
         _downloader.Config.DownloadAllPlatforms = options.DownloadAllPlatforms;
         _downloader.Config.DownloadAllArchs = options.DownloadAllArchs;
         _downloader.Config.DownloadAllLanguages = options.DownloadAllLanguages;
+        _downloader.Config.RetryPolicy = options.RetryPolicy;
+        _downloader.Config.MaxBytesPerSecond = options.MaxBytesPerSecond;
     }
 
     private void ThrowIfDisposed()
