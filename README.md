@@ -1,8 +1,6 @@
 # DepotDownloader
 
-[![License](https://img.shields.io/github/license/Rustbeard86/DepotDownloader.svg?label=License)](LICENSE)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Rustbeard86/DepotDownloader/build.yml?branch=master&label=Build)](https://github.com/Rustbeard86/DepotDownloader/actions)
-[![NuGet](https://img.shields.io/nuget/v/DepotDownloader.Lib.svg?label=NuGet)](https://www.nuget.org/packages/DepotDownloader.Lib/)
+[![License: GPL v2](https://img.shields.io/badge/License-GPL_v2-blue.svg)](LICENSE)
 
 Steam depot downloader utilizing the [SteamKit2](https://github.com/SteamRE/SteamKit) library. 
 
@@ -523,7 +521,7 @@ options.MaxDownloads = 16;
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [GNU General Public License v2.0](LICENSE).
 
 ---
 
