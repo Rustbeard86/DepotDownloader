@@ -279,9 +279,12 @@ internal class Program
             {
                 _userInterface.WriteLine();
                 _userInterface.WriteLine("Estimated download time:");
-                _userInterface.WriteLine("  At 10 MB/s:  {0}", FormatDuration(plan.TotalDownloadSize / (10 * 1024 * 1024)));
-                _userInterface.WriteLine("  At 50 MB/s:  {0}", FormatDuration(plan.TotalDownloadSize / (50 * 1024 * 1024)));
-                _userInterface.WriteLine("  At 100 MB/s: {0}", FormatDuration(plan.TotalDownloadSize / (100 * 1024 * 1024)));
+                _userInterface.WriteLine("  At 10 MB/s:  {0}",
+                    FormatDuration(plan.TotalDownloadSize / (10 * 1024 * 1024)));
+                _userInterface.WriteLine("  At 50 MB/s:  {0}",
+                    FormatDuration(plan.TotalDownloadSize / (50 * 1024 * 1024)));
+                _userInterface.WriteLine("  At 100 MB/s: {0}",
+                    FormatDuration(plan.TotalDownloadSize / (100 * 1024 * 1024)));
             }
 
             _userInterface.WriteLine();
@@ -307,7 +310,7 @@ internal class Program
             return $"{seconds} seconds";
         if (seconds < 3600)
             return $"{seconds / 60} min {seconds % 60} sec";
-        return $"{seconds / 3600}h {(seconds % 3600) / 60}m";
+        return $"{seconds / 3600}h {seconds % 3600 / 60}m";
     }
 
     private static string FormatSize(ulong bytes)

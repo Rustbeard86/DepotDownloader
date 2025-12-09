@@ -30,14 +30,8 @@ public static class ContentDownloader
 
     // Configuration and session state
     public static readonly DownloadConfig Config = new();
-    private static Steam3Session _steam3;
     private static CdnClientPool _cdnPool;
     private static IUserInterface _userInterface;
-
-    /// <summary>
-    ///     Gets the current Steam3 session, or null if not initialized.
-    /// </summary>
-    internal static Steam3Session Steam3 => _steam3;
 
     // Workshop content type filtering
     private static readonly FrozenSet<EWorkshopFileType> SupportedWorkshopFileTypes = new[]
@@ -49,6 +43,11 @@ public static class ContentDownloader
         EWorkshopFileType.IntegratedGuide,
         EWorkshopFileType.ControllerBinding
     }.ToFrozenSet();
+
+    /// <summary>
+    ///     Gets the current Steam3 session, or null if not initialized.
+    /// </summary>
+    internal static Steam3Session Steam3 { get; private set; }
 
     public static void Initialize(IUserInterface userInterface)
     {
@@ -98,7 +97,7 @@ public static class ContentDownloader
         if (username is not null && Config.RememberPassword)
             _ = AccountSettingsStore.Instance.LoginTokens.TryGetValue(username, out loginToken);
 
-        _steam3 = new Steam3Session(
+        Steam3 = new Steam3Session(
             new SteamUser.LogOnDetails
             {
                 Username = username,
@@ -110,20 +109,20 @@ public static class ContentDownloader
             _userInterface
         );
 
-        if (!_steam3.WaitForCredentials())
+        if (!Steam3.WaitForCredentials())
         {
             _userInterface?.WriteLine("Unable to get steam3 credentials.");
             return false;
         }
 
-        Task.Run(_steam3.TickCallbacks);
+        Task.Run(Steam3.TickCallbacks);
 
         return true;
     }
 
     public static void ShutdownSteam3()
     {
-        _steam3?.Disconnect();
+        Steam3?.Disconnect();
         AppInfoService.ClearCache();
     }
 
@@ -139,20 +138,18 @@ public static class ContentDownloader
         string language,
         bool lv)
     {
-        if (_steam3 is null)
+        if (Steam3 is null)
             throw new InvalidOperationException("Steam3 must be initialized before getting download plan.");
 
-        await _steam3.RequestAppInfo(appId);
+        await Steam3.RequestAppInfo(appId);
 
-        var appInfo = AppInfoService.GetAppInfo(_steam3, appId);
+        var appInfo = AppInfoService.GetAppInfo(Steam3, appId);
 
         // Get depot list using the same logic as DownloadAppAsync
         var hasSpecificDepots = depotManifestIds.Count > 0;
-        var depotIdsExpected = depotManifestIds.Select(x => x.depotId).ToList();
-        var depots = AppInfoService.GetAppSection(_steam3, appId, EAppInfoSection.Depots);
+        var depots = AppInfoService.GetAppSection(Steam3, appId, EAppInfoSection.Depots);
 
         if (!hasSpecificDepots && depots is not null)
-        {
             foreach (var depotSection in depots.Children)
             {
                 if (depotSection.Children.Count == 0)
@@ -199,7 +196,6 @@ public static class ContentDownloader
 
                 depotManifestIds.Add((id, InvalidManifestId));
             }
-        }
 
         var depotPlans = new List<DepotDownloadPlan>();
         ulong totalSize = 0;
@@ -222,19 +218,19 @@ public static class ContentDownloader
     private static async Task<DepotDownloadPlan> GetDepotDownloadPlanAsync(
         uint depotId, uint appId, ulong manifestId, string branch)
     {
-        if (!await AppInfoService.AccountHasAccessAsync(_steam3, appId, depotId))
+        if (!await AppInfoService.AccountHasAccessAsync(Steam3, appId, depotId))
             return null;
 
         if (manifestId == InvalidManifestId)
         {
-            manifestId = await AppInfoService.GetDepotManifestAsync(_steam3, depotId, appId, branch,
+            manifestId = await AppInfoService.GetDepotManifestAsync(Steam3, depotId, appId, branch,
                 Config.BetaPassword, _userInterface);
 
             if (manifestId == InvalidManifestId &&
                 !string.Equals(branch, DefaultBranch, StringComparison.OrdinalIgnoreCase))
             {
                 branch = DefaultBranch;
-                manifestId = await AppInfoService.GetDepotManifestAsync(_steam3, depotId, appId, branch,
+                manifestId = await AppInfoService.GetDepotManifestAsync(Steam3, depotId, appId, branch,
                     Config.BetaPassword, _userInterface);
             }
 
@@ -243,8 +239,8 @@ public static class ContentDownloader
         }
 
         // We need the depot key to download the manifest
-        await _steam3.RequestDepotKey(depotId, appId);
-        if (!_steam3.DepotKeys.TryGetValue(depotId, out var depotKey))
+        await Steam3.RequestDepotKey(depotId, appId);
+        if (!Steam3.DepotKeys.TryGetValue(depotId, out var depotKey))
             return null;
 
         // Try to get manifest info
@@ -252,22 +248,22 @@ public static class ContentDownloader
         Directory.CreateDirectory(Path.Combine(configDir, ConfigDir));
 
         // Download manifest to get file list
-        var cdnPool = new CdnClientPool(_steam3, appId);
+        var cdnPool = new CdnClientPool(Steam3, appId);
         await cdnPool.UpdateServerList();
 
-        DepotManifest manifest = null;
+        DepotManifest manifest;
         var connection = cdnPool.GetConnection();
 
         try
         {
-            var manifestRequestCode = await _steam3.GetDepotManifestRequestCodeAsync(
+            var manifestRequestCode = await Steam3.GetDepotManifestRequestCodeAsync(
                 depotId, appId, manifestId, branch);
 
             if (manifestRequestCode == 0)
                 return null;
 
             string cdnToken = null;
-            if (_steam3.CdnAuthTokens.TryGetValue((depotId, connection.Host), out var authTokenPromise))
+            if (Steam3.CdnAuthTokens.TryGetValue((depotId, connection.Host), out var authTokenPromise))
             {
                 var result = await authTokenPromise.Task;
                 cdnToken = result.Token;
@@ -285,7 +281,7 @@ public static class ContentDownloader
             return null;
         }
 
-        if (manifest?.Files is null)
+        if (manifest.Files is null)
             return null;
 
         var files = new List<FileDownloadInfo>();
@@ -310,7 +306,7 @@ public static class ContentDownloader
     private static async Task ProcessPublishedFileAsync(uint appId, ulong publishedFileId,
         List<ValueTuple<string, string>> fileUrls, List<ulong> contentFileIds)
     {
-        var details = await _steam3.GetPublishedFileDetails(appId, publishedFileId);
+        var details = await Steam3.GetPublishedFileDetails(appId, publishedFileId);
         var fileType = (EWorkshopFileType)details.file_type;
 
         if (fileType == EWorkshopFileType.Collection)
@@ -354,9 +350,9 @@ public static class ContentDownloader
     {
         SteamCloud.UGCDetailsCallback details = null;
 
-        if (_steam3?.SteamUser?.SteamID?.AccountType != EAccountType.AnonUser)
+        if (Steam3?.SteamUser?.SteamID?.AccountType != EAccountType.AnonUser)
         {
-            if (_steam3 is not null) details = await _steam3.GetUgcDetails(ugcId);
+            if (Steam3 is not null) details = await Steam3.GetUgcDetails(ugcId);
         }
         else
         {
@@ -405,9 +401,9 @@ public static class ContentDownloader
     public static async Task DownloadAppAsync(uint appId, List<(uint depotId, ulong manifestId)> depotManifestIds,
         string branch, string os, string arch, string language, bool lv, bool isUgc)
     {
-        if (_steam3 is null) throw new InvalidOperationException("Steam3 must be initialized before downloading.");
+        if (Steam3 is null) throw new InvalidOperationException("Steam3 must be initialized before downloading.");
 
-        _cdnPool = new CdnClientPool(_steam3, appId);
+        _cdnPool = new CdnClientPool(Steam3, appId);
 
         var configPath = Config.InstallDirectory;
         if (string.IsNullOrWhiteSpace(configPath)) configPath = DefaultDownloadDir;
@@ -415,19 +411,19 @@ public static class ContentDownloader
         Directory.CreateDirectory(Path.Combine(configPath, ConfigDir));
         DepotConfigStore.LoadFromFile(Path.Combine(configPath, ConfigDir, "depot.config"));
 
-        await _steam3.RequestAppInfo(appId);
+        await Steam3.RequestAppInfo(appId);
 
-        if (!await AppInfoService.AccountHasAccessAsync(_steam3, appId, appId))
+        if (!await AppInfoService.AccountHasAccessAsync(Steam3, appId, appId))
         {
-            if (_steam3.SteamUser?.SteamID?.AccountType != EAccountType.AnonUser &&
-                await _steam3.RequestFreeAppLicense(appId))
+            if (Steam3.SteamUser?.SteamID?.AccountType != EAccountType.AnonUser &&
+                await Steam3.RequestFreeAppLicense(appId))
             {
                 _userInterface?.WriteLine("Obtained FreeOnDemand license for app {0}", appId);
-                await _steam3.RequestAppInfo(appId, true);
+                await Steam3.RequestAppInfo(appId, true);
             }
             else
             {
-                var contentName = AppInfoService.GetAppName(_steam3, appId);
+                var contentName = AppInfoService.GetAppName(Steam3, appId);
                 throw new ContentDownloaderException(
                     $"App {appId} ({contentName}) is not available from this account.");
             }
@@ -436,7 +432,7 @@ public static class ContentDownloader
         var hasSpecificDepots = depotManifestIds.Count > 0;
         var depotIdsFound = new List<uint>();
         var depotIdsExpected = depotManifestIds.Select(x => x.depotId).ToList();
-        var depots = AppInfoService.GetAppSection(_steam3, appId, EAppInfoSection.Depots);
+        var depots = AppInfoService.GetAppSection(Steam3, appId, EAppInfoSection.Depots);
 
         if (isUgc)
         {
@@ -551,12 +547,12 @@ public static class ContentDownloader
 
     private static async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
     {
-        if (_steam3 is null)
+        if (Steam3 is null)
             throw new InvalidOperationException("Steam3 must be initialized before getting depot info.");
 
-        if (appId != InvalidAppId) await _steam3.RequestAppInfo(appId);
+        if (appId != InvalidAppId) await Steam3.RequestAppInfo(appId);
 
-        if (!await AppInfoService.AccountHasAccessAsync(_steam3, appId, depotId))
+        if (!await AppInfoService.AccountHasAccessAsync(Steam3, appId, depotId))
         {
             _userInterface?.WriteLine("Depot {0} is not available from this account.", depotId);
             return null;
@@ -564,7 +560,7 @@ public static class ContentDownloader
 
         if (manifestId == InvalidManifestId)
         {
-            manifestId = await AppInfoService.GetDepotManifestAsync(_steam3, depotId, appId, branch,
+            manifestId = await AppInfoService.GetDepotManifestAsync(Steam3, depotId, appId, branch,
                 Config.BetaPassword, _userInterface);
             if (manifestId == InvalidManifestId &&
                 !string.Equals(branch, DefaultBranch, StringComparison.OrdinalIgnoreCase))
@@ -572,7 +568,7 @@ public static class ContentDownloader
                 _userInterface?.WriteLine("Warning: Depot {0} does not have branch named \"{1}\". Trying {2} branch.",
                     depotId, branch, DefaultBranch);
                 branch = DefaultBranch;
-                manifestId = await AppInfoService.GetDepotManifestAsync(_steam3, depotId, appId, branch,
+                manifestId = await AppInfoService.GetDepotManifestAsync(Steam3, depotId, appId, branch,
                     Config.BetaPassword, _userInterface);
             }
 
@@ -583,14 +579,14 @@ public static class ContentDownloader
             }
         }
 
-        await _steam3.RequestDepotKey(depotId, appId);
-        if (!_steam3.DepotKeys.TryGetValue(depotId, out var depotKey))
+        await Steam3.RequestDepotKey(depotId, appId);
+        if (!Steam3.DepotKeys.TryGetValue(depotId, out var depotKey))
         {
             _userInterface?.WriteLine("No valid depot key for {0}, unable to download.", depotId);
             return null;
         }
 
-        var uVersion = AppInfoService.GetAppBuildNumber(_steam3, appId, branch);
+        var uVersion = AppInfoService.GetAppBuildNumber(Steam3, appId, branch);
 
         if (!CreateDirectories(depotId, uVersion, out var installDir))
         {
@@ -599,10 +595,10 @@ public static class ContentDownloader
         }
 
         var containingAppId = appId;
-        var proxyAppId = AppInfoService.GetDepotProxyAppId(_steam3, depotId, appId);
+        var proxyAppId = AppInfoService.GetDepotProxyAppId(Steam3, depotId, appId);
         if (proxyAppId != InvalidAppId)
         {
-            var common = AppInfoService.GetAppSection(_steam3, appId, EAppInfoSection.Common);
+            var common = AppInfoService.GetAppSection(Steam3, appId, EAppInfoSection.Common);
             if (common is null || !common["FreeToDownload"].AsBoolean()) containingAppId = proxyAppId;
         }
 
@@ -649,7 +645,7 @@ public static class ContentDownloader
 
         foreach (var depotFileData in depotsToDownload)
             await DepotFileDownloader.DownloadDepotFilesAsync(cts, downloadCounter, depotFileData,
-                allFileNamesAllDepots, _cdnPool, _steam3, Config, _userInterface);
+                allFileNamesAllDepots, _cdnPool, Steam3, Config, _userInterface);
 
         _userInterface?.UpdateProgress(downloadCounter.TotalDownloadSize, downloadCounter.TotalDownloadSize);
 
@@ -710,7 +706,7 @@ public static class ContentDownloader
                         connection = _cdnPool.GetConnection();
 
                         string cdnToken = null;
-                        if (_steam3.CdnAuthTokens.TryGetValue((depot.DepotId, connection.Host),
+                        if (Steam3.CdnAuthTokens.TryGetValue((depot.DepotId, connection.Host),
                                 out var authTokenCallbackPromise))
                         {
                             var result = await authTokenCallbackPromise.Task;
@@ -721,7 +717,7 @@ public static class ContentDownloader
 
                         if (manifestRequestCode == 0 || now >= manifestRequestCodeExpiration)
                         {
-                            manifestRequestCode = await _steam3.GetDepotManifestRequestCodeAsync(
+                            manifestRequestCode = await Steam3.GetDepotManifestRequestCodeAsync(
                                 depot.DepotId, depot.AppId, depot.ManifestId, depot.Branch);
                             manifestRequestCodeExpiration = now.Add(TimeSpan.FromMinutes(5));
 
@@ -748,9 +744,9 @@ public static class ContentDownloader
                     {
                         if (e.StatusCode == HttpStatusCode.Forbidden &&
                             connection is not null &&
-                            !_steam3.CdnAuthTokens.ContainsKey((depot.DepotId, connection.Host)))
+                            !Steam3.CdnAuthTokens.ContainsKey((depot.DepotId, connection.Host)))
                         {
-                            await _steam3.RequestCdnAuthToken(depot.AppId, depot.DepotId, connection);
+                            await Steam3.RequestCdnAuthToken(depot.AppId, depot.DepotId, connection);
                             _cdnPool.ReturnConnection(connection);
                             continue;
                         }
