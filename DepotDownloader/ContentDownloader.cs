@@ -34,6 +34,11 @@ public static class ContentDownloader
     private static CdnClientPool _cdnPool;
     private static IUserInterface _userInterface;
 
+    /// <summary>
+    ///     Gets the current Steam3 session, or null if not initialized.
+    /// </summary>
+    internal static Steam3Session Steam3 => _steam3;
+
     // Workshop content type filtering
     private static readonly FrozenSet<EWorkshopFileType> SupportedWorkshopFileTypes = new[]
     {
@@ -120,6 +125,186 @@ public static class ContentDownloader
     {
         _steam3?.Disconnect();
         AppInfoService.ClearCache();
+    }
+
+    /// <summary>
+    ///     Gets a download plan without actually downloading.
+    /// </summary>
+    public static async Task<DownloadPlan> GetDownloadPlanAsync(
+        uint appId,
+        List<(uint depotId, ulong manifestId)> depotManifestIds,
+        string branch,
+        string os,
+        string arch,
+        string language,
+        bool lv)
+    {
+        if (_steam3 is null)
+            throw new InvalidOperationException("Steam3 must be initialized before getting download plan.");
+
+        await _steam3.RequestAppInfo(appId);
+
+        var appInfo = AppInfoService.GetAppInfo(_steam3, appId);
+
+        // Get depot list using the same logic as DownloadAppAsync
+        var hasSpecificDepots = depotManifestIds.Count > 0;
+        var depotIdsExpected = depotManifestIds.Select(x => x.depotId).ToList();
+        var depots = AppInfoService.GetAppSection(_steam3, appId, EAppInfoSection.Depots);
+
+        if (!hasSpecificDepots && depots is not null)
+        {
+            foreach (var depotSection in depots.Children)
+            {
+                if (depotSection.Children.Count == 0)
+                    continue;
+
+                if (!uint.TryParse(depotSection.Name, out var id))
+                    continue;
+
+                var depotConfig = depotSection["config"];
+                if (depotConfig != KeyValue.Invalid)
+                {
+                    if (!Config.DownloadAllPlatforms &&
+                        depotConfig["oslist"] != KeyValue.Invalid &&
+                        !string.IsNullOrWhiteSpace(depotConfig["oslist"].Value))
+                    {
+                        var oslist = depotConfig["oslist"].Value.Split(',');
+                        if (Array.IndexOf(oslist, os ?? Util.GetSteamOs()) == -1)
+                            continue;
+                    }
+
+                    if (!Config.DownloadAllArchs &&
+                        depotConfig["osarch"] != KeyValue.Invalid &&
+                        !string.IsNullOrWhiteSpace(depotConfig["osarch"].Value))
+                    {
+                        var depotArch = depotConfig["osarch"].Value;
+                        if (depotArch != (arch ?? Util.GetSteamArch()))
+                            continue;
+                    }
+
+                    if (!Config.DownloadAllLanguages &&
+                        depotConfig["language"] != KeyValue.Invalid &&
+                        !string.IsNullOrWhiteSpace(depotConfig["language"].Value))
+                    {
+                        var depotLang = depotConfig["language"].Value;
+                        if (depotLang != (language ?? "english"))
+                            continue;
+                    }
+
+                    if (!lv &&
+                        depotConfig["lowviolence"] != KeyValue.Invalid &&
+                        depotConfig["lowviolence"].AsBoolean())
+                        continue;
+                }
+
+                depotManifestIds.Add((id, InvalidManifestId));
+            }
+        }
+
+        var depotPlans = new List<DepotDownloadPlan>();
+        ulong totalSize = 0;
+        var totalFiles = 0;
+
+        foreach (var (depotId, manifestId) in depotManifestIds)
+        {
+            var depotPlan = await GetDepotDownloadPlanAsync(depotId, appId, manifestId, branch);
+            if (depotPlan is not null)
+            {
+                depotPlans.Add(depotPlan);
+                totalSize += depotPlan.TotalSize;
+                totalFiles += depotPlan.Files.Count;
+            }
+        }
+
+        return new DownloadPlan(appId, appInfo.Name, depotPlans, totalSize, totalFiles);
+    }
+
+    private static async Task<DepotDownloadPlan> GetDepotDownloadPlanAsync(
+        uint depotId, uint appId, ulong manifestId, string branch)
+    {
+        if (!await AppInfoService.AccountHasAccessAsync(_steam3, appId, depotId))
+            return null;
+
+        if (manifestId == InvalidManifestId)
+        {
+            manifestId = await AppInfoService.GetDepotManifestAsync(_steam3, depotId, appId, branch,
+                Config.BetaPassword, _userInterface);
+
+            if (manifestId == InvalidManifestId &&
+                !string.Equals(branch, DefaultBranch, StringComparison.OrdinalIgnoreCase))
+            {
+                branch = DefaultBranch;
+                manifestId = await AppInfoService.GetDepotManifestAsync(_steam3, depotId, appId, branch,
+                    Config.BetaPassword, _userInterface);
+            }
+
+            if (manifestId == InvalidManifestId)
+                return null;
+        }
+
+        // We need the depot key to download the manifest
+        await _steam3.RequestDepotKey(depotId, appId);
+        if (!_steam3.DepotKeys.TryGetValue(depotId, out var depotKey))
+            return null;
+
+        // Try to get manifest info
+        var configDir = Config.InstallDirectory ?? DefaultDownloadDir;
+        Directory.CreateDirectory(Path.Combine(configDir, ConfigDir));
+
+        // Download manifest to get file list
+        var cdnPool = new CdnClientPool(_steam3, appId);
+        await cdnPool.UpdateServerList();
+
+        DepotManifest manifest = null;
+        var connection = cdnPool.GetConnection();
+
+        try
+        {
+            var manifestRequestCode = await _steam3.GetDepotManifestRequestCodeAsync(
+                depotId, appId, manifestId, branch);
+
+            if (manifestRequestCode == 0)
+                return null;
+
+            string cdnToken = null;
+            if (_steam3.CdnAuthTokens.TryGetValue((depotId, connection.Host), out var authTokenPromise))
+            {
+                var result = await authTokenPromise.Task;
+                cdnToken = result.Token;
+            }
+
+            manifest = await cdnPool.CdnClient.DownloadManifestAsync(
+                depotId, manifestId, manifestRequestCode,
+                connection, depotKey, cdnPool.ProxyServer, cdnToken);
+
+            cdnPool.ReturnConnection(connection);
+        }
+        catch
+        {
+            cdnPool.ReturnBrokenConnection(connection);
+            return null;
+        }
+
+        if (manifest?.Files is null)
+            return null;
+
+        var files = new List<FileDownloadInfo>();
+        ulong totalSize = 0;
+
+        foreach (var file in manifest.Files)
+        {
+            if (file.Flags.HasFlag(EDepotFileFlag.Directory))
+                continue;
+
+            if (!FileFilter.TestIsFileIncluded(file.FileName, Config))
+                continue;
+
+            var hash = Convert.ToHexString(file.FileHash).ToLowerInvariant();
+            files.Add(new FileDownloadInfo(file.FileName, file.TotalSize, hash));
+            totalSize += file.TotalSize;
+        }
+
+        return new DepotDownloadPlan(depotId, manifestId, files, totalSize);
     }
 
     private static async Task ProcessPublishedFileAsync(uint appId, ulong publishedFileId,

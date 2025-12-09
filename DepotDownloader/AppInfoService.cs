@@ -49,12 +49,113 @@ internal static class AppInfoService
     }
 
     /// <summary>
+    ///     Gets basic application information.
+    /// </summary>
+    internal static AppInfo GetAppInfo(Steam3Session steam3, uint appId)
+    {
+        var common = GetAppSection(steam3, appId, EAppInfoSection.Common);
+        if (common is null)
+            return new AppInfo(appId, string.Empty, string.Empty);
+
+        var name = common["name"].AsString() ?? string.Empty;
+        var type = common["type"].AsString() ?? string.Empty;
+
+        return new AppInfo(appId, name, type);
+    }
+
+    /// <summary>
     ///     Gets the app name from Steam app info.
     /// </summary>
     internal static string GetAppName(Steam3Session steam3, uint appId)
     {
         var info = GetAppSection(steam3, appId, EAppInfoSection.Common);
         return info is null ? string.Empty : info["name"].AsString();
+    }
+
+    /// <summary>
+    ///     Gets all depots for an application.
+    /// </summary>
+    internal static IReadOnlyList<DepotInfo> GetDepots(Steam3Session steam3, uint appId)
+    {
+        var depots = GetAppSection(steam3, appId, EAppInfoSection.Depots);
+        if (depots is null)
+            return [];
+
+        var result = new List<DepotInfo>();
+
+        foreach (var depotSection in depots.Children)
+        {
+            // Skip non-depot entries (like "branches")
+            if (!uint.TryParse(depotSection.Name, out var depotId))
+                continue;
+
+            // Skip depots with no children (just references)
+            if (depotSection.Children.Count == 0)
+                continue;
+
+            var name = depotSection["name"].AsString();
+            var config = depotSection["config"];
+
+            string os = null;
+            string arch = null;
+            string language = null;
+
+            if (config != KeyValue.Invalid)
+            {
+                os = config["oslist"].AsString();
+                arch = config["osarch"].AsString();
+                language = config["language"].AsString();
+            }
+
+            ulong? maxSize = null;
+            var maxSizeValue = depotSection["maxsize"].AsUnsignedLong();
+            if (maxSizeValue > 0)
+                maxSize = maxSizeValue;
+
+            var isSharedInstall = depotSection["sharedinstall"].AsBoolean();
+
+            result.Add(new DepotInfo(depotId, name, os, arch, language, maxSize, isSharedInstall));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    ///     Gets all branches for an application.
+    /// </summary>
+    internal static IReadOnlyList<BranchInfo> GetBranches(Steam3Session steam3, uint appId)
+    {
+        var depots = GetAppSection(steam3, appId, EAppInfoSection.Depots);
+        if (depots is null)
+            return [];
+
+        var branches = depots["branches"];
+        if (branches == KeyValue.Invalid)
+            return [];
+
+        var result = new List<BranchInfo>();
+
+        foreach (var branchSection in branches.Children)
+        {
+            var name = branchSection.Name;
+            if (string.IsNullOrEmpty(name))
+                continue;
+
+            var buildIdStr = branchSection["buildid"].AsString();
+            _ = uint.TryParse(buildIdStr, out var buildId);
+
+            DateTime? timeUpdated = null;
+            var timeUpdatedStr = branchSection["timeupdated"].AsString();
+            if (!string.IsNullOrEmpty(timeUpdatedStr) && long.TryParse(timeUpdatedStr, out var timestamp))
+                timeUpdated = DateTimeOffset.FromUnixTimeSeconds(timestamp).DateTime;
+
+            var isPasswordProtected = branchSection["pwdrequired"].AsBoolean();
+            var description = branchSection["description"].AsString();
+
+            result.Add(new BranchInfo(name, buildId, timeUpdated, isPasswordProtected, description));
+        }
+
+        return result;
     }
 
     /// <summary>

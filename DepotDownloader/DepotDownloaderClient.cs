@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
@@ -137,6 +138,80 @@ public sealed class DepotDownloaderClient : IDisposable
     }
 
     /// <summary>
+    ///     Gets information about a Steam application.
+    /// </summary>
+    /// <param name="appId">The Steam application ID.</param>
+    /// <returns>Application information including name and type.</returns>
+    /// <exception cref="InvalidOperationException">When not logged in.</exception>
+    public async Task<AppInfo> GetAppInfoAsync(uint appId)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+
+        await ContentDownloader.Steam3.RequestAppInfo(appId);
+        return AppInfoService.GetAppInfo(ContentDownloader.Steam3, appId);
+    }
+
+    /// <summary>
+    ///     Gets all depots for a Steam application.
+    /// </summary>
+    /// <param name="appId">The Steam application ID.</param>
+    /// <returns>List of depot information.</returns>
+    /// <exception cref="InvalidOperationException">When not logged in.</exception>
+    public async Task<IReadOnlyList<DepotInfo>> GetDepotsAsync(uint appId)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+
+        await ContentDownloader.Steam3.RequestAppInfo(appId);
+        return AppInfoService.GetDepots(ContentDownloader.Steam3, appId);
+    }
+
+    /// <summary>
+    ///     Gets all branches for a Steam application.
+    /// </summary>
+    /// <param name="appId">The Steam application ID.</param>
+    /// <returns>List of branch information.</returns>
+    /// <exception cref="InvalidOperationException">When not logged in.</exception>
+    public async Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(uint appId)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+
+        await ContentDownloader.Steam3.RequestAppInfo(appId);
+        return AppInfoService.GetBranches(ContentDownloader.Steam3, appId);
+    }
+
+    /// <summary>
+    ///     Gets a download plan showing what would be downloaded without actually downloading.
+    /// </summary>
+    /// <param name="options">Download configuration options.</param>
+    /// <returns>A plan showing files, sizes, and depot information.</returns>
+    /// <exception cref="InvalidOperationException">When not logged in.</exception>
+    public async Task<DownloadPlan> GetDownloadPlanAsync(DepotDownloadOptions options)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+        ArgumentNullException.ThrowIfNull(options);
+
+        if (options.AppId == ContentDownloader.InvalidAppId)
+            throw new ArgumentException("AppId must be specified", nameof(options));
+
+        // Apply configuration from options
+        ApplyConfiguration(options);
+
+        return await ContentDownloader.GetDownloadPlanAsync(
+            options.AppId,
+            options.DepotManifestIds,
+            options.Branch,
+            options.Os,
+            options.Architecture,
+            options.Language,
+            options.LowViolence
+        );
+    }
+
+    /// <summary>
     ///     Downloads Steam app content based on the provided options.
     /// </summary>
     /// <param name="options">Download configuration options.</param>
@@ -234,5 +309,11 @@ public sealed class DepotDownloaderClient : IDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(_disposed, nameof(DepotDownloaderClient));
+    }
+
+    private void ThrowIfNotLoggedIn()
+    {
+        if (ContentDownloader.Steam3 is null || !ContentDownloader.Steam3.IsLoggedOn)
+            throw new InvalidOperationException("Must be logged in to Steam before querying app information.");
     }
 }

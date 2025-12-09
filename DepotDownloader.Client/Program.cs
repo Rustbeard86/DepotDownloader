@@ -75,11 +75,18 @@ internal class Program
             return 1;
         }
 
+        // Check for query-only commands
+        var listDepots = HasParameter(args, "-list-depots") || HasParameter(args, "--list-depots");
+        var listBranches = HasParameter(args, "-list-branches") || HasParameter(args, "--list-branches");
+        var dryRun = HasParameter(args, "-dry-run") || HasParameter(args, "--dry-run");
+
         var pubFile = GetParameter(args, "-pubfile", ContentDownloader.InvalidManifestId);
         var ugcId = GetParameter(args, "-ugc", ContentDownloader.InvalidManifestId);
 
-        // Build download options
-        var options = await BuildDownloadOptionsAsync(args, appId);
+        // Build download options (unless this is a query-only command)
+        DepotDownloadOptions options = null;
+        if (!listDepots && !listBranches)
+            options = await BuildDownloadOptionsAsync(args, appId);
 
         PrintUnconsumedArgs(args);
 
@@ -97,6 +104,16 @@ internal class Program
             _userInterface.WriteLine("Error: Authentication failed");
             return 1;
         }
+
+        // Handle query commands
+        if (listDepots)
+            return await ListDepotsAsync(client, appId);
+
+        if (listBranches)
+            return await ListBranchesAsync(client, appId);
+
+        if (dryRun)
+            return await DryRunAsync(client, options);
 
         // Perform download
         try
@@ -125,6 +142,187 @@ internal class Program
             _userInterface.WriteLine("Download failed due to an unhandled exception: {0}", e.Message);
             throw;
         }
+    }
+
+    private static async Task<int> ListDepotsAsync(DepotDownloaderClient client, uint appId)
+    {
+        try
+        {
+            var appInfo = await client.GetAppInfoAsync(appId);
+            var depots = await client.GetDepotsAsync(appId);
+
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("Depots for {0} ({1}):", appInfo.Name, appId);
+            _userInterface.WriteLine();
+
+            if (depots.Count == 0)
+            {
+                _userInterface.WriteLine("  No depots found.");
+                return 0;
+            }
+
+            // Column headers
+            _userInterface.WriteLine("  {0,-10} {1,-40} {2,-15} {3,-6} {4,-10} {5}",
+                "DepotID", "Name", "OS", "Arch", "Language", "Size");
+            _userInterface.WriteLine("  {0}", new string('-', 100));
+
+            foreach (var depot in depots.OrderBy(d => d.DepotId))
+            {
+                var os = depot.Os ?? "all";
+                var arch = depot.Architecture ?? "-";
+                var lang = depot.Language ?? "-";
+                var size = depot.MaxSize.HasValue ? FormatSize(depot.MaxSize.Value) : "-";
+                var name = depot.Name ?? "(unnamed)";
+
+                if (name.Length > 38)
+                    name = name[..35] + "...";
+
+                _userInterface.WriteLine("  {0,-10} {1,-40} {2,-15} {3,-6} {4,-10} {5}",
+                    depot.DepotId, name, os, arch, lang, size);
+            }
+
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("Total: {0} depot(s)", depots.Count);
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            _userInterface.WriteLine("Error listing depots: {0}", ex.Message);
+            return 1;
+        }
+    }
+
+    private static async Task<int> ListBranchesAsync(DepotDownloaderClient client, uint appId)
+    {
+        try
+        {
+            var appInfo = await client.GetAppInfoAsync(appId);
+            var branches = await client.GetBranchesAsync(appId);
+
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("Branches for {0} ({1}):", appInfo.Name, appId);
+            _userInterface.WriteLine();
+
+            if (branches.Count == 0)
+            {
+                _userInterface.WriteLine("  No branches found.");
+                return 0;
+            }
+
+            // Column headers
+            _userInterface.WriteLine("  {0,-20} {1,-12} {2,-22} {3,-12} {4}",
+                "Branch", "BuildID", "Updated", "Protected", "Description");
+            _userInterface.WriteLine("  {0}", new string('-', 90));
+
+            foreach (var branch in branches.OrderBy(b => b.Name == "public" ? 0 : 1).ThenBy(b => b.Name))
+            {
+                var updated = branch.TimeUpdated?.ToString("yyyy-MM-dd HH:mm") ?? "-";
+                var protection = branch.IsPasswordProtected ? "Yes" : "No";
+                var description = branch.Description ?? "";
+
+                if (description.Length > 30)
+                    description = description[..27] + "...";
+
+                _userInterface.WriteLine("  {0,-20} {1,-12} {2,-22} {3,-12} {4}",
+                    branch.Name, branch.BuildId, updated, protection, description);
+            }
+
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("Total: {0} branch(es)", branches.Count);
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            _userInterface.WriteLine("Error listing branches: {0}", ex.Message);
+            return 1;
+        }
+    }
+
+    private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options)
+    {
+        try
+        {
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("Analyzing download plan (dry-run mode)...");
+            _userInterface.WriteLine();
+
+            var plan = await client.GetDownloadPlanAsync(options);
+
+            _userInterface.WriteLine("Download Plan for {0} ({1}):", plan.AppName, plan.AppId);
+            _userInterface.WriteLine();
+
+            if (plan.Depots.Count == 0)
+            {
+                _userInterface.WriteLine("  No depots would be downloaded.");
+                return 0;
+            }
+
+            foreach (var depot in plan.Depots)
+            {
+                _userInterface.WriteLine("  Depot {0} (Manifest {1})", depot.DepotId, depot.ManifestId);
+                _userInterface.WriteLine("    Files: {0}", depot.Files.Count);
+                _userInterface.WriteLine("    Size:  {0}", FormatSize(depot.TotalSize));
+                _userInterface.WriteLine();
+            }
+
+            _userInterface.WriteLine(new string('-', 50));
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("Summary:");
+            _userInterface.WriteLine("  Total depots:     {0}", plan.Depots.Count);
+            _userInterface.WriteLine("  Total files:      {0:N0}", plan.TotalFileCount);
+            _userInterface.WriteLine("  Total size:       {0}", FormatSize(plan.TotalDownloadSize));
+
+            // Estimate download time at various speeds
+            if (plan.TotalDownloadSize > 0)
+            {
+                _userInterface.WriteLine();
+                _userInterface.WriteLine("Estimated download time:");
+                _userInterface.WriteLine("  At 10 MB/s:  {0}", FormatDuration(plan.TotalDownloadSize / (10 * 1024 * 1024)));
+                _userInterface.WriteLine("  At 50 MB/s:  {0}", FormatDuration(plan.TotalDownloadSize / (50 * 1024 * 1024)));
+                _userInterface.WriteLine("  At 100 MB/s: {0}", FormatDuration(plan.TotalDownloadSize / (100 * 1024 * 1024)));
+            }
+
+            _userInterface.WriteLine();
+            _userInterface.WriteLine("To download, run the same command without --dry-run");
+
+            return 0;
+        }
+        catch (ContentDownloaderException ex)
+        {
+            _userInterface.WriteLine("Error: {0}", ex.Message);
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            _userInterface.WriteLine("Error getting download plan: {0}", ex.Message);
+            return 1;
+        }
+    }
+
+    private static string FormatDuration(ulong seconds)
+    {
+        if (seconds < 60)
+            return $"{seconds} seconds";
+        if (seconds < 3600)
+            return $"{seconds / 60} min {seconds % 60} sec";
+        return $"{seconds / 3600}h {(seconds % 3600) / 60}m";
+    }
+
+    private static string FormatSize(ulong bytes)
+    {
+        string[] sizes = ["B", "KB", "MB", "GB", "TB"];
+        var order = 0;
+        double size = bytes;
+
+        while (size >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            size /= 1024;
+        }
+
+        return $"{size:0.##} {sizes[order]}";
     }
 
     private static async Task<DepotDownloadOptions> BuildDownloadOptionsAsync(string[] args, uint appId)
@@ -337,6 +535,10 @@ internal class Program
         _userInterface.WriteLine(
             "                       [-username <username> [-password <password>]] [other options]");
         _userInterface.WriteLine();
+        _userInterface.WriteLine("Usage: listing depots or branches for an app:");
+        _userInterface.WriteLine("       depotdownloader -app <id> -list-depots [-username <username>]");
+        _userInterface.WriteLine("       depotdownloader -app <id> -list-branches [-username <username>]");
+        _userInterface.WriteLine();
         _userInterface.WriteLine("Usage: downloading a workshop item using pubfile id");
         _userInterface.WriteLine(
             "       depotdownloader -app <id> -pubfile <id> [-username <username> [-password <password>]]");
@@ -401,6 +603,10 @@ internal class Program
             "  -loginid <#>             - a unique 32-bit integer Steam LogonID in decimal, required if running multiple instances of DepotDownloader concurrently.");
         _userInterface.WriteLine(
             "  -use-lancache            - forces downloads over the local network via a Lancache instance.");
+        _userInterface.WriteLine();
+        _userInterface.WriteLine("  -list-depots             - list all depots for the specified app and exit.");
+        _userInterface.WriteLine("  -list-branches           - list all branches for the specified app and exit.");
+        _userInterface.WriteLine("  -dry-run                 - show what would be downloaded without downloading.");
         _userInterface.WriteLine();
         _userInterface.WriteLine("  -debug                   - enable verbose debug logging.");
         _userInterface.WriteLine("  -V or --version          - print version and runtime.");
