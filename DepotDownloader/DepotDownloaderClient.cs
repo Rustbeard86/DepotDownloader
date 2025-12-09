@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -13,6 +12,7 @@ namespace DepotDownloader.Lib;
 /// </summary>
 public sealed class DepotDownloaderClient : IDisposable
 {
+    private readonly ContentDownloader _downloader;
     private readonly IUserInterface _userInterface;
     private bool _disposed;
     private HttpDiagnosticEventListener _httpEventListener;
@@ -25,11 +25,13 @@ public sealed class DepotDownloaderClient : IDisposable
     {
         _userInterface = userInterface ?? new NullUserInterface();
 
-        // Initialize all components
+        // Initialize stores
         AccountSettingsStore.Initialize(_userInterface);
         DepotConfigStore.Initialize(_userInterface);
-        ContentDownloader.Initialize(_userInterface);
         Util.Initialize(_userInterface);
+
+        // Create the instance-based downloader
+        _downloader = new ContentDownloader(_userInterface);
 
         // Load account settings
         AccountSettingsStore.LoadFromFile("account.config");
@@ -44,7 +46,7 @@ public sealed class DepotDownloaderClient : IDisposable
             return;
 
         _httpEventListener?.Dispose();
-        ContentDownloader.ShutdownSteam3();
+        _downloader.Dispose();
 
         _disposed = true;
     }
@@ -79,8 +81,8 @@ public sealed class DepotDownloaderClient : IDisposable
     {
         ThrowIfDisposed();
 
-        ContentDownloader.Config.RememberPassword = rememberPassword;
-        ContentDownloader.Config.SkipAppConfirmation = skipAppConfirmation;
+        _downloader.Config.RememberPassword = rememberPassword;
+        _downloader.Config.SkipAppConfirmation = skipAppConfirmation;
 
         // Check for saved login token
         string loginToken = null;
@@ -112,7 +114,7 @@ public sealed class DepotDownloaderClient : IDisposable
                     "Warning: Password contains non-ASCII characters, which is not supported by Steam.");
         }
 
-        return ContentDownloader.InitializeSteam3(username, password);
+        return _downloader.InitializeSteam3(username, password);
     }
 
     /// <summary>
@@ -123,8 +125,8 @@ public sealed class DepotDownloaderClient : IDisposable
     public bool LoginAnonymous(bool skipAppConfirmation = false)
     {
         ThrowIfDisposed();
-        ContentDownloader.Config.SkipAppConfirmation = skipAppConfirmation;
-        return ContentDownloader.InitializeSteam3(null, null);
+        _downloader.Config.SkipAppConfirmation = skipAppConfirmation;
+        return _downloader.InitializeSteam3(null, null);
     }
 
     /// <summary>
@@ -137,11 +139,11 @@ public sealed class DepotDownloaderClient : IDisposable
     {
         ThrowIfDisposed();
 
-        ContentDownloader.Config.UseQrCode = true;
-        ContentDownloader.Config.RememberPassword = rememberPassword;
-        ContentDownloader.Config.SkipAppConfirmation = skipAppConfirmation;
+        _downloader.Config.UseQrCode = true;
+        _downloader.Config.RememberPassword = rememberPassword;
+        _downloader.Config.SkipAppConfirmation = skipAppConfirmation;
 
-        return ContentDownloader.InitializeSteam3(null, null);
+        return _downloader.InitializeSteam3(null, null);
     }
 
     /// <summary>
@@ -155,8 +157,8 @@ public sealed class DepotDownloaderClient : IDisposable
         ThrowIfDisposed();
         ThrowIfNotLoggedIn();
 
-        await ContentDownloader.Steam3.RequestAppInfo(appId);
-        return AppInfoService.GetAppInfo(ContentDownloader.Steam3, appId);
+        await _downloader.Steam3.RequestAppInfo(appId);
+        return AppInfoService.GetAppInfo(_downloader.Steam3, appId);
     }
 
     /// <summary>
@@ -170,8 +172,8 @@ public sealed class DepotDownloaderClient : IDisposable
         ThrowIfDisposed();
         ThrowIfNotLoggedIn();
 
-        await ContentDownloader.Steam3.RequestAppInfo(appId);
-        return AppInfoService.GetDepots(ContentDownloader.Steam3, appId);
+        await _downloader.Steam3.RequestAppInfo(appId);
+        return AppInfoService.GetDepots(_downloader.Steam3, appId);
     }
 
     /// <summary>
@@ -185,8 +187,8 @@ public sealed class DepotDownloaderClient : IDisposable
         ThrowIfDisposed();
         ThrowIfNotLoggedIn();
 
-        await ContentDownloader.Steam3.RequestAppInfo(appId);
-        return AppInfoService.GetBranches(ContentDownloader.Steam3, appId);
+        await _downloader.Steam3.RequestAppInfo(appId);
+        return AppInfoService.GetBranches(_downloader.Steam3, appId);
     }
 
     /// <summary>
@@ -207,7 +209,7 @@ public sealed class DepotDownloaderClient : IDisposable
         // Apply configuration from options
         ApplyConfiguration(options);
 
-        return await ContentDownloader.GetDownloadPlanAsync(
+        return await _downloader.GetDownloadPlanAsync(
             options.AppId,
             options.DepotManifestIds,
             options.Branch,
@@ -295,7 +297,7 @@ public sealed class DepotDownloaderClient : IDisposable
         if (DownloadProgress is not null) progressCallback = args => DownloadProgress?.Invoke(this, args);
 
         // Perform download with cancellation token and progress callback
-        await ContentDownloader.DownloadAppAsync(
+        await _downloader.DownloadAppAsync(
             options.AppId,
             options.DepotManifestIds,
             options.Branch,
@@ -304,7 +306,9 @@ public sealed class DepotDownloaderClient : IDisposable
             options.Language,
             options.LowViolence,
             false,
-            progressCallback, options.CancellationToken);
+            progressCallback,
+            options.CancellationToken
+        );
     }
 
     /// <summary>
@@ -322,7 +326,7 @@ public sealed class DepotDownloaderClient : IDisposable
         if (publishedFileId == ContentDownloader.InvalidManifestId)
             throw new ArgumentException("PublishedFileId must be specified", nameof(publishedFileId));
 
-        await ContentDownloader.DownloadPubfileAsync(appId, publishedFileId);
+        await _downloader.DownloadPubfileAsync(appId, publishedFileId);
     }
 
     /// <summary>
@@ -340,35 +344,29 @@ public sealed class DepotDownloaderClient : IDisposable
         if (ugcId == ContentDownloader.InvalidManifestId)
             throw new ArgumentException("UGC ID must be specified", nameof(ugcId));
 
-        await ContentDownloader.DownloadUgcAsync(appId, ugcId);
+        await _downloader.DownloadUgcAsync(appId, ugcId);
     }
 
     /// <summary>
-    ///     Applies download options to the ContentDownloader configuration.
+    ///     Applies download options to the downloader configuration.
     /// </summary>
-    /// <remarks>
-    ///     This method is intentionally not static as it's part of the client's instance API.
-    ///     It may need to access instance state in future enhancements.
-    /// </remarks>
-    [SuppressMessage("Performance", "CA1822:Mark members as static",
-        Justification = "Method is part of instance API and may need instance access in future")]
     private void ApplyConfiguration(DepotDownloadOptions options)
     {
-        ContentDownloader.Config.InstallDirectory = options.InstallDirectory;
-        ContentDownloader.Config.FilesToDownload = options.FilesToDownload;
-        ContentDownloader.Config.FilesToDownloadRegex = options.FilesToDownloadRegex;
-        ContentDownloader.Config.UsingFileList =
+        _downloader.Config.InstallDirectory = options.InstallDirectory;
+        _downloader.Config.FilesToDownload = options.FilesToDownload;
+        _downloader.Config.FilesToDownloadRegex = options.FilesToDownloadRegex;
+        _downloader.Config.UsingFileList =
             options.FilesToDownload?.Count > 0 ||
             options.FilesToDownloadRegex?.Count > 0;
-        ContentDownloader.Config.VerifyAll = options.VerifyAll;
-        ContentDownloader.Config.DownloadManifestOnly = options.DownloadManifestOnly;
-        ContentDownloader.Config.MaxDownloads = options.MaxDownloads;
-        ContentDownloader.Config.CellId = options.CellId;
-        ContentDownloader.Config.LoginId = options.LoginId;
-        ContentDownloader.Config.BetaPassword = options.BranchPassword;
-        ContentDownloader.Config.DownloadAllPlatforms = options.DownloadAllPlatforms;
-        ContentDownloader.Config.DownloadAllArchs = options.DownloadAllArchs;
-        ContentDownloader.Config.DownloadAllLanguages = options.DownloadAllLanguages;
+        _downloader.Config.VerifyAll = options.VerifyAll;
+        _downloader.Config.DownloadManifestOnly = options.DownloadManifestOnly;
+        _downloader.Config.MaxDownloads = options.MaxDownloads;
+        _downloader.Config.CellId = options.CellId;
+        _downloader.Config.LoginId = options.LoginId;
+        _downloader.Config.BetaPassword = options.BranchPassword;
+        _downloader.Config.DownloadAllPlatforms = options.DownloadAllPlatforms;
+        _downloader.Config.DownloadAllArchs = options.DownloadAllArchs;
+        _downloader.Config.DownloadAllLanguages = options.DownloadAllLanguages;
     }
 
     private void ThrowIfDisposed()
@@ -378,7 +376,7 @@ public sealed class DepotDownloaderClient : IDisposable
 
     private void ThrowIfNotLoggedIn()
     {
-        if (ContentDownloader.Steam3 is null || !ContentDownloader.Steam3.IsLoggedOn)
+        if (!_downloader.IsLoggedOn)
             throw new InvalidOperationException("Must be logged in to Steam before querying app information.");
     }
 }

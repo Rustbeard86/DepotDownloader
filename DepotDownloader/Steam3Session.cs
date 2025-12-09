@@ -24,6 +24,9 @@ internal class Steam3Session
 
     // SteamKit2 Components
     private readonly CallbackManager _callbacks;
+
+    // Configuration
+    private readonly DownloadConfig _config;
     private readonly SteamUser.LogOnDetails _logonDetails;
     private readonly SteamApps _steamApps;
     private readonly SteamCloud _steamCloud;
@@ -46,15 +49,15 @@ internal class Steam3Session
     public SteamContent SteamContent;
     public SteamUser SteamUser;
 
-    public Steam3Session(SteamUser.LogOnDetails details, IUserInterface userInterface)
+    public Steam3Session(SteamUser.LogOnDetails details, IUserInterface userInterface, DownloadConfig config)
     {
         _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+        _config = config ?? throw new ArgumentNullException(nameof(config));
         _logonDetails = details;
-        _authenticatedUser = details.Username is not null || ContentDownloader.Config.UseQrCode;
+        _authenticatedUser = details.Username is not null || _config.UseQrCode;
 
-        var clientConfiguration = SteamConfiguration.Create(config =>
-            config
-                .WithHttpClientFactory(static _ => HttpClientFactory.CreateHttpClient())
+        var clientConfiguration = SteamConfiguration.Create(c =>
+            c.WithHttpClientFactory(static _ => HttpClientFactory.CreateHttpClient())
         );
 
         SteamClient = new SteamClient(clientConfiguration);
@@ -428,9 +431,9 @@ internal class Steam3Session
                                     DeviceFriendlyName = nameof(DepotDownloader),
                                     Username = _logonDetails.Username,
                                     Password = _logonDetails.Password,
-                                    IsPersistentSession = ContentDownloader.Config.RememberPassword,
+                                    IsPersistentSession = _config.RememberPassword,
                                     GuardData = guarddata,
-                                    Authenticator = new ConsoleAuthenticator(_userInterface)
+                                    Authenticator = new ConsoleAuthenticator(_userInterface, _config)
                                 });
                         }
                         catch (TaskCanceledException)
@@ -444,7 +447,7 @@ internal class Steam3Session
                             return;
                         }
                     }
-                    else if (_logonDetails.AccessToken is null && ContentDownloader.Config.UseQrCode)
+                    else if (_logonDetails.AccessToken is null && _config.UseQrCode)
                     {
                         _userInterface.WriteLine("Logging in with QR code...");
 
@@ -454,7 +457,7 @@ internal class Steam3Session
                                 new AuthSessionDetails
                                 {
                                     DeviceFriendlyName = nameof(DepotDownloader),
-                                    IsPersistentSession = ContentDownloader.Config.RememberPassword
+                                    IsPersistentSession = _config.RememberPassword
                                 });
 
                             _authSession = session;
@@ -497,7 +500,7 @@ internal class Steam3Session
                         {
                             AccountSettingsStore.Instance.GuardData[result.AccountName] = result.NewGuardData;
 
-                            if (ContentDownloader.Config.UseQrCode)
+                            if (_config.UseQrCode)
                                 _userInterface.WriteLine(
                                     $"Success! Next time you can login with -username {result.AccountName} -remember-password instead of -qr.");
                         }
@@ -574,7 +577,7 @@ internal class Steam3Session
     {
         var isSteamGuard = loggedOn.Result == EResult.AccountLogonDenied;
         var is2Fa = loggedOn.Result == EResult.AccountLoginDeniedNeedTwoFactor;
-        var isAccessToken = ContentDownloader.Config.RememberPassword && _logonDetails.AccessToken is not null &&
+        var isAccessToken = _config.RememberPassword && _logonDetails.AccessToken is not null &&
                             loggedOn.Result is EResult.InvalidPassword
                                 or EResult.InvalidSignature
                                 or EResult.AccessDenied
@@ -685,10 +688,10 @@ internal class Steam3Session
         _seq++;
         IsLoggedOn = true;
 
-        if (ContentDownloader.Config.CellId == 0)
+        if (_config.CellId == 0)
         {
             _userInterface.WriteLine("Using Steam3 suggested CellID: " + loggedOn.CellID);
-            ContentDownloader.Config.CellId = (int)loggedOn.CellID;
+            _config.CellId = (int)loggedOn.CellID;
         }
     }
 

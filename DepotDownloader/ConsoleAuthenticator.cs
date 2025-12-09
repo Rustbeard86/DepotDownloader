@@ -5,10 +5,16 @@ using SteamKit2.Authentication;
 namespace DepotDownloader.Lib;
 
 // This is practically copied from https://github.com/SteamRE/SteamKit/blob/master/SteamKit2/SteamKit2/Steam/Authentication/UserConsoleAuthenticator.cs
-internal class ConsoleAuthenticator(IUserInterface userInterface) : IAuthenticator
+internal class ConsoleAuthenticator : IAuthenticator
 {
-    private readonly IUserInterface _userInterface =
-        userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+    private readonly DownloadConfig _config;
+    private readonly IUserInterface _userInterface;
+
+    public ConsoleAuthenticator(IUserInterface userInterface, DownloadConfig config)
+    {
+        _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+    }
 
     /// <inheritdoc />
     public Task<string> GetDeviceCodeAsync(bool previousCodeWasIncorrect)
@@ -52,7 +58,7 @@ internal class ConsoleAuthenticator(IUserInterface userInterface) : IAuthenticat
     /// <inheritdoc />
     public Task<bool> AcceptDeviceConfirmationAsync()
     {
-        if (ContentDownloader.Config.SkipAppConfirmation) return Task.FromResult(false);
+        if (_config.SkipAppConfirmation) return Task.FromResult(false);
 
         _userInterface.WriteError("STEAM GUARD! Use the Steam Mobile App to confirm your sign in...");
 

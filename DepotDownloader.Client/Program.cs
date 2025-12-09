@@ -68,8 +68,8 @@ internal class Program
         }
 
         // Parse download options
-        var appId = GetParameter(args, "-app", ContentDownloader.InvalidAppId);
-        if (appId == ContentDownloader.InvalidAppId)
+        var appId = GetParameter(args, "-app", SteamConstants.InvalidAppId);
+        if (appId == SteamConstants.InvalidAppId)
         {
             _userInterface.WriteLine("Error: -app not specified!");
             return 1;
@@ -83,8 +83,8 @@ internal class Program
         var jsonOutput = HasParameter(args, "-json") || HasParameter(args, "--json");
         var noProgress = HasParameter(args, "-no-progress") || HasParameter(args, "--no-progress");
 
-        var pubFile = GetParameter(args, "-pubfile", ContentDownloader.InvalidManifestId);
-        var ugcId = GetParameter(args, "-ugc", ContentDownloader.InvalidManifestId);
+        var pubFile = GetParameter(args, "-pubfile", SteamConstants.InvalidManifestId);
+        var ugcId = GetParameter(args, "-ugc", SteamConstants.InvalidManifestId);
 
         // Build download options (unless this is a query-only command)
         DepotDownloadOptions options = null;
@@ -143,18 +143,12 @@ internal class Program
                 };
             }
 
-            if (pubFile != ContentDownloader.InvalidManifestId)
-            {
+            if (pubFile != SteamConstants.InvalidManifestId)
                 await client.DownloadPublishedFileAsync(appId, pubFile);
-            }
-            else if (ugcId != ContentDownloader.InvalidManifestId)
-            {
+            else if (ugcId != SteamConstants.InvalidManifestId)
                 await client.DownloadUgcAsync(appId, ugcId);
-            }
             else
-            {
                 await client.DownloadAppAsync(options);
-            }
 
             progressBar?.Complete();
 
@@ -170,7 +164,8 @@ internal class Program
         {
             if (jsonOutput)
             {
-                WriteJsonError($"Insufficient disk space on {ex.TargetDrive}. Required: {ex.RequiredBytes}, Available: {ex.AvailableBytes}");
+                WriteJsonError(
+                    $"Insufficient disk space on {ex.TargetDrive}. Required: {ex.RequiredBytes}, Available: {ex.AvailableBytes}");
             }
             else
             {
@@ -183,6 +178,7 @@ internal class Program
                 _userInterface.WriteLine();
                 _userInterface.WriteLine("Free up disk space or use -skip-disk-check to bypass this check.");
             }
+
             return 1;
         }
         catch (ContentDownloaderException ex)
@@ -225,16 +221,19 @@ internal class Program
                     AppId = appId,
                     AppName = appInfo.Name,
                     AppType = appInfo.Type,
-                    Depots = depots.Select(d => new DepotJson
-                    {
-                        DepotId = d.DepotId,
-                        Name = d.Name,
-                        Os = d.Os,
-                        Architecture = d.Architecture,
-                        Language = d.Language,
-                        MaxSize = d.MaxSize,
-                        IsSharedInstall = d.IsSharedInstall
-                    }).ToList()
+                    Depots =
+                    [
+                        .. depots.Select(d => new DepotJson
+                        {
+                            DepotId = d.DepotId,
+                            Name = d.Name,
+                            Os = d.Os,
+                            Architecture = d.Architecture,
+                            Language = d.Language,
+                            MaxSize = d.MaxSize,
+                            IsSharedInstall = d.IsSharedInstall
+                        })
+                    ]
                 });
                 return 0;
             }
@@ -298,14 +297,17 @@ internal class Program
                 {
                     AppId = appId,
                     AppName = appInfo.Name,
-                    Branches = branches.Select(b => new BranchJson
-                    {
-                        Name = b.Name,
-                        BuildId = b.BuildId,
-                        TimeUpdated = b.TimeUpdated,
-                        IsPasswordProtected = b.IsPasswordProtected,
-                        Description = b.Description
-                    }).ToList()
+                    Branches =
+                    [
+                        .. branches.Select(b => new BranchJson
+                        {
+                            Name = b.Name,
+                            BuildId = b.BuildId,
+                            TimeUpdated = b.TimeUpdated,
+                            IsPasswordProtected = b.IsPasswordProtected,
+                            Description = b.Description
+                        })
+                    ]
                 });
                 return 0;
             }
@@ -353,7 +355,8 @@ internal class Program
         }
     }
 
-    private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options, bool verbose, bool jsonOutput)
+    private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options, bool verbose,
+        bool jsonOutput)
     {
         try
         {
@@ -376,20 +379,28 @@ internal class Program
                     TotalFiles = plan.TotalFileCount,
                     TotalBytes = plan.TotalDownloadSize,
                     TotalSize = FormatSize(plan.TotalDownloadSize),
-                    Depots = plan.Depots.Select(d => new DepotPlanJson
-                    {
-                        DepotId = d.DepotId,
-                        ManifestId = d.ManifestId,
-                        FileCount = d.Files.Count,
-                        TotalBytes = d.TotalSize,
-                        TotalSize = FormatSize(d.TotalSize),
-                        Files = verbose ? d.Files.Select(f => new FilePlanJson
+                    Depots =
+                    [
+                        .. plan.Depots.Select(d => new DepotPlanJson
                         {
-                            FileName = f.FileName,
-                            Size = f.Size,
-                            Hash = f.Hash
-                        }).ToList() : null
-                    }).ToList()
+                            DepotId = d.DepotId,
+                            ManifestId = d.ManifestId,
+                            FileCount = d.Files.Count,
+                            TotalBytes = d.TotalSize,
+                            TotalSize = FormatSize(d.TotalSize),
+                            Files = verbose
+                                ?
+                                [
+                                    .. d.Files.Select(f => new FilePlanJson
+                                    {
+                                        FileName = f.FileName,
+                                        Size = f.Size,
+                                        Hash = f.Hash
+                                    })
+                                ]
+                                : null
+                        })
+                    ]
                 });
                 return 0;
             }
@@ -566,7 +577,7 @@ internal class Program
         // Branch options
         var branch = GetParameter<string>(args, "-branch") ??
                      GetParameter<string>(args, "-beta") ??
-                     ContentDownloader.DefaultBranch;
+                     SteamConstants.DefaultBranch;
         options.Branch = branch;
         options.BranchPassword = GetParameter<string>(args, "-branchpassword") ??
                                  GetParameter<string>(args, "-betapassword");
@@ -613,7 +624,7 @@ internal class Program
         else
         {
             options.DepotManifestIds =
-                [.. depotIdList.Select(depotId => (depotId, ContentDownloader.InvalidManifestId))];
+                [.. depotIdList.Select(depotId => (depotId, SteamConstants.InvalidManifestId))];
         }
 
         return options;
@@ -721,7 +732,7 @@ internal class Program
         _userInterface.WriteLine(
             "  -manifest <id>           - manifest id of content to download (requires -depot, default: current for branch).");
         _userInterface.WriteLine(
-            $"  -branch <branchname>    - download from specified branch if available (default: {ContentDownloader.DefaultBranch}).");
+            $"  -branch <branchname>    - download from specified branch if available (default: {SteamConstants.DefaultBranch}).");
         _userInterface.WriteLine("  -branchpassword <pass>   - branch password if applicable.");
         _userInterface.WriteLine(
             "  -all-platforms           - downloads all platform-specific depots when -app is used.");
@@ -780,7 +791,8 @@ internal class Program
         _userInterface.WriteLine("  -dry-run                 - show what would be downloaded without downloading.");
         _userInterface.WriteLine("  -verbose, -v             - show detailed output (e.g., file list in dry-run).");
         _userInterface.WriteLine();
-        _userInterface.WriteLine("  -json                    - output results in JSON format for scripting/automation.");
+        _userInterface.WriteLine(
+            "  -json                    - output results in JSON format for scripting/automation.");
         _userInterface.WriteLine("  -no-progress             - disable the progress bar during downloads.");
         _userInterface.WriteLine();
         _userInterface.WriteLine("  -debug                   - enable verbose debug logging.");

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.IO;
@@ -16,22 +16,20 @@ namespace DepotDownloader.Lib;
 /// </summary>
 public class ContentDownloaderException(string value) : Exception(value);
 
-public static class ContentDownloader
+/// <summary>
+///     Instance-based content downloader that supports concurrent download sessions.
+/// </summary>
+internal sealed class ContentDownloader : IDisposable
 {
-    // Constants for validation sentinel values
-    public const uint InvalidAppId = uint.MaxValue;
-    public const ulong InvalidManifestId = ulong.MaxValue;
-    public const string DefaultBranch = "public";
+    // Constants for validation sentinel values (reference public constants)
+    public const uint InvalidAppId = SteamConstants.InvalidAppId;
+    public const ulong InvalidManifestId = SteamConstants.InvalidManifestId;
+    public const string DefaultBranch = SteamConstants.DefaultBranch;
 
     // Directory structure constants
     private const string DefaultDownloadDir = "depots";
     private const string ConfigDir = ".DepotDownloader";
     private static readonly string StagingDirectoryName = Path.Combine(ConfigDir, "staging");
-
-    // Configuration and session state
-    public static readonly DownloadConfig Config = new();
-    private static CdnClientPool _cdnPool;
-    private static IUserInterface _userInterface;
 
     // Workshop content type filtering
     private static readonly FrozenSet<EWorkshopFileType> SupportedWorkshopFileTypes = new[]
@@ -44,53 +42,48 @@ public static class ContentDownloader
         EWorkshopFileType.ControllerBinding
     }.ToFrozenSet();
 
+    private readonly IUserInterface _userInterface;
+    private CdnClientPool _cdnPool;
+    private bool _disposed;
+
+    /// <summary>
+    ///     Creates a new content downloader instance.
+    /// </summary>
+    /// <param name="userInterface">Interface for user interaction and output.</param>
+    public ContentDownloader(IUserInterface userInterface)
+    {
+        _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+        Config = new DownloadConfig();
+    }
+
+    /// <summary>
+    ///     Configuration for this download session.
+    /// </summary>
+    public DownloadConfig Config { get; }
+
     /// <summary>
     ///     Gets the current Steam3 session, or null if not initialized.
     /// </summary>
-    internal static Steam3Session Steam3 { get; private set; }
+    public Steam3Session Steam3 { get; private set; }
 
-    public static void Initialize(IUserInterface userInterface)
+    /// <summary>
+    ///     Gets whether the downloader is logged in to Steam.
+    /// </summary>
+    public bool IsLoggedOn => Steam3?.IsLoggedOn ?? false;
+
+    public void Dispose()
     {
-        _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+        if (_disposed)
+            return;
+
+        Steam3?.Disconnect();
+        _disposed = true;
     }
 
-    private static bool CreateDirectories(uint depotId, uint depotVersion, out string installDir)
-    {
-        installDir = null;
-        try
-        {
-            if (string.IsNullOrWhiteSpace(Config.InstallDirectory))
-            {
-                Directory.CreateDirectory(DefaultDownloadDir);
-
-                var depotPath = Path.Combine(DefaultDownloadDir, depotId.ToString());
-                Directory.CreateDirectory(depotPath);
-
-                installDir = Path.Combine(depotPath, depotVersion.ToString());
-                Directory.CreateDirectory(installDir);
-
-                Directory.CreateDirectory(Path.Combine(installDir, ConfigDir));
-                Directory.CreateDirectory(Path.Combine(installDir, StagingDirectoryName));
-            }
-            else
-            {
-                Directory.CreateDirectory(Config.InstallDirectory);
-
-                installDir = Config.InstallDirectory;
-
-                Directory.CreateDirectory(Path.Combine(installDir, ConfigDir));
-                Directory.CreateDirectory(Path.Combine(installDir, StagingDirectoryName));
-            }
-        }
-        catch
-        {
-            return false;
-        }
-
-        return true;
-    }
-
-    public static bool InitializeSteam3(string username, string password)
+    /// <summary>
+    ///     Initializes a Steam3 session with the given credentials.
+    /// </summary>
+    public bool InitializeSteam3(string username, string password)
     {
         string loginToken = null;
 
@@ -106,7 +99,8 @@ public static class ContentDownloader
                 AccessToken = loginToken,
                 LoginID = Config.LoginId ?? 0x534B32
             },
-            _userInterface
+            _userInterface,
+            Config
         );
 
         if (!Steam3.WaitForCredentials())
@@ -120,7 +114,10 @@ public static class ContentDownloader
         return true;
     }
 
-    public static void ShutdownSteam3()
+    /// <summary>
+    ///     Shuts down the Steam3 session and clears caches.
+    /// </summary>
+    public void ShutdownSteam3()
     {
         Steam3?.Disconnect();
         AppInfoService.ClearCache();
@@ -129,7 +126,7 @@ public static class ContentDownloader
     /// <summary>
     ///     Gets a download plan without actually downloading.
     /// </summary>
-    public static async Task<DownloadPlan> GetDownloadPlanAsync(
+    public async Task<DownloadPlan> GetDownloadPlanAsync(
         uint appId,
         List<(uint depotId, ulong manifestId)> depotManifestIds,
         string branch,
@@ -215,7 +212,7 @@ public static class ContentDownloader
         return new DownloadPlan(appId, appInfo.Name, depotPlans, totalSize, totalFiles);
     }
 
-    private static async Task<DepotDownloadPlan> GetDepotDownloadPlanAsync(
+    private async Task<DepotDownloadPlan> GetDepotDownloadPlanAsync(
         uint depotId, uint appId, ulong manifestId, string branch)
     {
         if (!await AppInfoService.AccountHasAccessAsync(Steam3, appId, depotId))
@@ -303,7 +300,27 @@ public static class ContentDownloader
         return new DepotDownloadPlan(depotId, manifestId, files, totalSize);
     }
 
-    private static async Task ProcessPublishedFileAsync(uint appId, ulong publishedFileId,
+    /// <summary>
+    ///     Downloads a published workshop file.
+    /// </summary>
+    public async Task DownloadPubfileAsync(uint appId, ulong publishedFileId)
+    {
+        List<ValueTuple<string, string>> fileUrls = [];
+        List<ulong> contentFileIds = [];
+
+        await ProcessPublishedFileAsync(appId, publishedFileId, fileUrls, contentFileIds);
+
+        foreach (var item in fileUrls)
+            await DownloadWebFile(appId, item.Item1, item.Item2);
+
+        if (contentFileIds.Count > 0)
+        {
+            var depotManifestIds = contentFileIds.Select(id => (appId, id)).ToList();
+            await DownloadAppAsync(appId, depotManifestIds, DefaultBranch, null, null, null, false, true);
+        }
+    }
+
+    private async Task ProcessPublishedFileAsync(uint appId, ulong publishedFileId,
         List<ValueTuple<string, string>> fileUrls, List<ulong> contentFileIds)
     {
         var details = await Steam3.GetPublishedFileDetails(appId, publishedFileId);
@@ -330,29 +347,17 @@ public static class ContentDownloader
         }
     }
 
-    public static async Task DownloadPubfileAsync(uint appId, ulong publishedFileId)
-    {
-        List<ValueTuple<string, string>> fileUrls = [];
-        List<ulong> contentFileIds = [];
-
-        await ProcessPublishedFileAsync(appId, publishedFileId, fileUrls, contentFileIds);
-
-        foreach (var item in fileUrls) await DownloadWebFile(appId, item.Item1, item.Item2);
-
-        if (contentFileIds.Count > 0)
-        {
-            var depotManifestIds = contentFileIds.Select(id => (appId, id)).ToList();
-            await DownloadAppAsync(appId, depotManifestIds, DefaultBranch, null, null, null, false, true);
-        }
-    }
-
-    public static async Task DownloadUgcAsync(uint appId, ulong ugcId)
+    /// <summary>
+    ///     Downloads UGC content.
+    /// </summary>
+    public async Task DownloadUgcAsync(uint appId, ulong ugcId)
     {
         SteamCloud.UGCDetailsCallback details = null;
 
         if (Steam3?.SteamUser?.SteamID?.AccountType != EAccountType.AnonUser)
         {
-            if (Steam3 is not null) details = await Steam3.GetUgcDetails(ugcId);
+            if (Steam3 is not null)
+                details = await Steam3.GetUgcDetails(ugcId);
         }
         else
         {
@@ -365,7 +370,7 @@ public static class ContentDownloader
             await DownloadAppAsync(appId, [(appId, ugcId)], DefaultBranch, null, null, null, false, true);
     }
 
-    private static async Task DownloadWebFile(uint appId, string fileName, string url)
+    private async Task DownloadWebFile(uint appId, string fileName, string url)
     {
         if (!CreateDirectories(appId, 0, out var installDir))
         {
@@ -393,12 +398,16 @@ public static class ContentDownloader
             await responseStream.CopyToAsync(file);
         }
 
-        if (File.Exists(fileFinalPath)) File.Delete(fileFinalPath);
+        if (File.Exists(fileFinalPath))
+            File.Delete(fileFinalPath);
 
         File.Move(fileStagingPath, fileFinalPath);
     }
 
-    public static async Task DownloadAppAsync(
+    /// <summary>
+    ///     Downloads Steam app content.
+    /// </summary>
+    public async Task DownloadAppAsync(
         uint appId,
         List<(uint depotId, ulong manifestId)> depotManifestIds,
         string branch,
@@ -410,7 +419,8 @@ public static class ContentDownloader
         DownloadProgressCallback progressCallback = null,
         CancellationToken cancellationToken = default)
     {
-        if (Steam3 is null) throw new InvalidOperationException("Steam3 must be initialized before downloading.");
+        if (Steam3 is null)
+            throw new InvalidOperationException("Steam3 must be initialized before downloading.");
 
         // Check for cancellation early
         cancellationToken.ThrowIfCancellationRequested();
@@ -418,7 +428,8 @@ public static class ContentDownloader
         _cdnPool = new CdnClientPool(Steam3, appId);
 
         var configPath = Config.InstallDirectory;
-        if (string.IsNullOrWhiteSpace(configPath)) configPath = DefaultDownloadDir;
+        if (string.IsNullOrWhiteSpace(configPath))
+            configPath = DefaultDownloadDir;
 
         Directory.CreateDirectory(Path.Combine(configPath, ConfigDir));
         DepotConfigStore.LoadFromFile(Path.Combine(configPath, ConfigDir, "depot.config"));
@@ -542,7 +553,8 @@ public static class ContentDownloader
         {
             cancellationToken.ThrowIfCancellationRequested();
             var info = await GetDepotInfo(depotId, appId, manifestId, branch);
-            if (info is not null) infos.Add(info);
+            if (info is not null)
+                infos.Add(info);
         }
 
         _userInterface?.WriteLine();
@@ -558,12 +570,49 @@ public static class ContentDownloader
         }
     }
 
-    private static async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
+    private bool CreateDirectories(uint depotId, uint depotVersion, out string installDir)
+    {
+        installDir = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(Config.InstallDirectory))
+            {
+                Directory.CreateDirectory(DefaultDownloadDir);
+
+                var depotPath = Path.Combine(DefaultDownloadDir, depotId.ToString());
+                Directory.CreateDirectory(depotPath);
+
+                installDir = Path.Combine(depotPath, depotVersion.ToString());
+                Directory.CreateDirectory(installDir);
+
+                Directory.CreateDirectory(Path.Combine(installDir, ConfigDir));
+                Directory.CreateDirectory(Path.Combine(installDir, StagingDirectoryName));
+            }
+            else
+            {
+                Directory.CreateDirectory(Config.InstallDirectory);
+
+                installDir = Config.InstallDirectory;
+
+                Directory.CreateDirectory(Path.Combine(installDir, ConfigDir));
+                Directory.CreateDirectory(Path.Combine(installDir, StagingDirectoryName));
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
     {
         if (Steam3 is null)
             throw new InvalidOperationException("Steam3 must be initialized before getting depot info.");
 
-        if (appId != InvalidAppId) await Steam3.RequestAppInfo(appId);
+        if (appId != InvalidAppId)
+            await Steam3.RequestAppInfo(appId);
 
         if (!await AppInfoService.AccountHasAccessAsync(Steam3, appId, depotId))
         {
@@ -612,13 +661,14 @@ public static class ContentDownloader
         if (proxyAppId != InvalidAppId)
         {
             var common = AppInfoService.GetAppSection(Steam3, appId, EAppInfoSection.Common);
-            if (common is null || !common["FreeToDownload"].AsBoolean()) containingAppId = proxyAppId;
+            if (common is null || !common["FreeToDownload"].AsBoolean())
+                containingAppId = proxyAppId;
         }
 
         return new DepotDownloadInfo(depotId, containingAppId, manifestId, branch, installDir, depotKey);
     }
 
-    private static async Task DownloadSteam3Async(List<DepotDownloadInfo> depots,
+    private async Task DownloadSteam3Async(List<DepotDownloadInfo> depots,
         DownloadProgressCallback progressCallback = null, CancellationToken cancellationToken = default)
     {
         _userInterface?.UpdateProgress(0, 1);
@@ -675,7 +725,7 @@ public static class ContentDownloader
             downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);
     }
 
-    private static async Task<DepotFilesData> ProcessDepotManifestAndFiles(CancellationTokenSource cts,
+    private async Task<DepotFilesData> ProcessDepotManifestAndFiles(CancellationTokenSource cts,
         DepotDownloadInfo depot, GlobalDownloadCounter downloadCounter)
     {
         var depotCounter = new DepotDownloadCounter();
@@ -744,7 +794,8 @@ public static class ContentDownloader
                             manifestRequestCodeExpiration = now.Add(TimeSpan.FromMinutes(5));
 
                             // ReSharper disable once MethodHasAsyncOverload
-                            if (manifestRequestCode == 0) cts.Cancel();
+                            if (manifestRequestCode == 0)
+                                cts.Cancel();
                         }
 
                         DebugLog.WriteLine("ContentDownloader",
@@ -884,7 +935,9 @@ public static class ContentDownloader
 
         var uniqueChunks = new HashSet<byte[]>(new ChunkIdComparer());
 
-        if (manifest.Files is null) return;
+        if (manifest.Files is null)
+            return;
+
         foreach (var file in manifest.Files)
         foreach (var chunk in file.Chunks)
             uniqueChunks.Add(chunk.ChunkID);
