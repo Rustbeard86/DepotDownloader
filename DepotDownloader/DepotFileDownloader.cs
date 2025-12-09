@@ -51,15 +51,13 @@ internal static class DepotFileDownloader
         await Parallel.ForEachAsync(files, parallelOptions, async (file, _) =>
         {
             await Task.Yield();
-            ProcessDepotFile(cts, downloadCounter, depotFilesData, file, networkChunkQueue, config, userInterface, stateStore);
+            ProcessDepotFile(cts, downloadCounter, depotFilesData, file, networkChunkQueue, config, userInterface,
+                stateStore);
         });
 
         // Create speed limiter if configured
         SpeedLimiter speedLimiter = null;
-        if (config.MaxBytesPerSecond is > 0)
-        {
-            speedLimiter = new SpeedLimiter(config.MaxBytesPerSecond.Value);
-        }
+        if (config.MaxBytesPerSecond is > 0) speedLimiter = new SpeedLimiter(config.MaxBytesPerSecond.Value);
 
         try
         {
@@ -162,7 +160,7 @@ internal static class DepotFileDownloader
             foreach (var chunk in file.Chunks)
             {
                 if (chunk.ChunkID is null) continue;
-                
+
                 var chunkId = Convert.ToHexString(chunk.ChunkID).ToLowerInvariant();
                 if (stateStore is not null && stateStore.IsChunkComplete(depot.DepotId, chunkId))
                 {
@@ -171,6 +169,7 @@ internal static class DepotFileDownloader
                     {
                         depotDownloadCounter.SizeDownloaded += chunk.UncompressedLength;
                     }
+
                     lock (downloadCounter)
                     {
                         downloadCounter.CompleteDownloadSize -= chunk.UncompressedLength;
@@ -364,10 +363,12 @@ internal static class DepotFileDownloader
             var remaining = Interlocked.Decrement(ref fileStreamData.ChunksToDownload);
             if (remaining == 0)
             {
+                // ReSharper disable once MethodHasAsyncOverload
                 fileStreamData.FileStream?.Dispose();
                 fileStreamData.FileLock.Dispose();
                 stateStore.MarkFileComplete(depot.DepotId, file.FileName);
             }
+
             return;
         }
 
@@ -397,13 +398,10 @@ internal static class DepotFileDownloader
 
                     DebugLog.WriteLine("DepotFileDownloader", "Downloading chunk {0} from {1} with {2}", chunkId,
                         connection, cdnPool.ProxyServer is not null ? cdnPool.ProxyServer : "no proxy");
-                    
+
                     // Apply speed limiting before download
-                    if (speedLimiter is not null)
-                    {
-                        await speedLimiter.WaitAsync((int)chunk.CompressedLength, cts.Token);
-                    }
-                    
+                    if (speedLimiter is not null) await speedLimiter.WaitAsync((int)chunk.CompressedLength, cts.Token);
+
                     written = await cdnPool.CdnClient.DownloadDepotChunkAsync(
                         depot.DepotId,
                         chunk,
@@ -464,15 +462,15 @@ internal static class DepotFileDownloader
                 if (written == 0 && retryAttempt < retryPolicy.MaxRetries)
                 {
                     var delay = retryPolicy.GetDelay(retryAttempt);
-                    userInterface?.WriteLine("Retry {0}/{1} for chunk {2} after {3:F1}s", 
+                    userInterface?.WriteLine("Retry {0}/{1} for chunk {2} after {3:F1}s",
                         retryAttempt + 1, retryPolicy.MaxRetries, chunkId, delay.TotalSeconds);
-                    
+
                     await Task.Delay(delay, cts.Token);
                     retryAttempt++;
                 }
                 else if (written == 0 && retryAttempt >= retryPolicy.MaxRetries)
                 {
-                    userInterface?.WriteLine("Max retries ({0}) exceeded for chunk {1}", 
+                    userInterface?.WriteLine("Max retries ({0}) exceeded for chunk {1}",
                         retryPolicy.MaxRetries, chunkId);
                     break;
                 }
@@ -502,7 +500,7 @@ internal static class DepotFileDownloader
 
                 fileStreamData.FileStream.Seek((long)chunk.Offset, SeekOrigin.Begin);
                 await fileStreamData.FileStream.WriteAsync(chunkBuffer.AsMemory(0, written), cts.Token);
-                
+
                 // Mark chunk as complete for resume support
                 stateStore?.MarkChunkComplete(depot.DepotId, chunkId, chunk.UncompressedLength);
             }
@@ -522,7 +520,7 @@ internal static class DepotFileDownloader
             // ReSharper disable once MethodHasAsyncOverload
             fileStreamData.FileStream?.Dispose();
             fileStreamData.FileLock.Dispose();
-            
+
             // Mark file as complete for resume support
             stateStore?.MarkFileComplete(depot.DepotId, file.FileName);
         }
