@@ -31,6 +31,8 @@ Supports **.NET 10.0** and later.
   - [Authentication Methods](#authentication-methods)
   - [Query APIs](#query-apis)
   - [Download Planning](#download-planning)
+  - [Cancellation Support](#cancellation-support)
+  - [Progress Reporting](#progress-reporting)
   - [Download Options](#download-options)
   - [Custom User Interface](#custom-user-interface)
   - [Error Handling](#error-handling)
@@ -393,6 +395,79 @@ if (!spaceCheck.HasSufficientSpace)
 await client.DownloadAppAsync(options);
 ```
 
+### Cancellation Support
+
+Cancel downloads gracefully using a `CancellationToken`:
+
+```csharp
+using var cts = new CancellationTokenSource();
+
+var options = new DepotDownloadOptions
+{
+    AppId = 730,
+    InstallDirectory = @"C:\Games\CS2",
+    CancellationToken = cts.Token
+};
+
+// Cancel after 5 minutes or when user requests
+cts.CancelAfter(TimeSpan.FromMinutes(5));
+
+// Or cancel from another thread/task
+_ = Task.Run(async () =>
+{
+    await Task.Delay(TimeSpan.FromSeconds(30));
+    cts.Cancel(); // Cancel the download
+});
+
+try
+{
+    await client.DownloadAppAsync(options);
+}
+catch (OperationCanceledException)
+{
+    Console.WriteLine("Download was cancelled");
+}
+```
+
+### Progress Reporting
+
+Subscribe to download progress events for real-time updates:
+
+```csharp
+using var client = new DepotDownloaderClient();
+
+// Subscribe to progress events
+client.DownloadProgress += (sender, e) =>
+{
+    Console.WriteLine($"Progress: {e.ProgressPercent:F1}%");
+    Console.WriteLine($"Downloaded: {e.BytesDownloaded / 1024.0 / 1024:F1} MB / {e.TotalBytes / 1024.0 / 1024:F1} MB");
+    Console.WriteLine($"Speed: {e.SpeedBytesPerSecond / 1024.0 / 1024:F1} MB/s");
+    Console.WriteLine($"ETA: {e.EstimatedTimeRemaining:hh\\:mm\\:ss}");
+    Console.WriteLine($"Files: {e.FilesCompleted} / {e.TotalFiles}");
+    Console.WriteLine($"Current: {e.CurrentFile}");
+};
+
+client.LoginAnonymous();
+
+var options = new DepotDownloadOptions
+{
+    AppId = 730,
+    InstallDirectory = @"C:\Games\CS2"
+};
+
+await client.DownloadAppAsync(options);
+```
+
+The `DownloadProgressEventArgs` provides:
+- `BytesDownloaded` - Total bytes downloaded so far
+- `TotalBytes` - Total bytes to download
+- `ProgressPercent` - Progress percentage (0-100)
+- `CurrentFile` - Current file being downloaded
+- `FilesCompleted` - Number of files completed
+- `TotalFiles` - Total number of files
+- `SpeedBytesPerSecond` - Current download speed
+- `EstimatedTimeRemaining` - Estimated time remaining
+
 ### Download Options
 
 ```csharp
@@ -577,9 +652,10 @@ client.EnableDebugLogging();
 
 ### DepotDownloaderClient
 
-| Method | Description |
+| Member | Description |
 |--------|-------------|
 | `DepotDownloaderClient(IUserInterface)` | Creates a new client instance |
+| `DownloadProgress` | Event raised when download progress changes |
 | `Login(username, password, rememberPassword, skipAppConfirmation)` | Authenticate with credentials |
 | `LoginAnonymous(skipAppConfirmation)` | Anonymous authentication |
 | `LoginWithQrCode(rememberPassword, skipAppConfirmation)` | QR code authentication |
@@ -604,6 +680,7 @@ client.EnableDebugLogging();
 | `BranchInfo` | Branch name, build ID, update time, password protection |
 | `DownloadPlan` | List of depots with files and total size |
 | `DiskSpaceCheckResult` | Required/available space and sufficiency check |
+| `DownloadProgressEventArgs` | Progress info: bytes, files, speed, ETA |
 
 ### DepotDownloadOptions
 

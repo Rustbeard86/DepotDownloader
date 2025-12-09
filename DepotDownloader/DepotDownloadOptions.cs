@@ -111,8 +111,8 @@ public sealed class DepotDownloadOptions
     public bool VerifyDiskSpace { get; set; } = true;
 
     /// <summary>
-    ///     Cancellation token for graceful cancellation from GUI apps or services.
-    ///     If not provided, an internal token will be created.
+    ///     Cancellation token for graceful cancellation of download operations.
+    ///     Allows GUI applications and services to cancel downloads.
     /// </summary>
     public CancellationToken CancellationToken { get; set; } = CancellationToken.None;
 }

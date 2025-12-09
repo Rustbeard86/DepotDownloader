@@ -29,7 +29,7 @@ internal static class DepotFileDownloader
         Steam3Session steam3,
         DownloadConfig config,
         IUserInterface userInterface,
-        DownloadProgressContext progressContext = null)
+        DownloadProgressCallback progressCallback = null)
     {
         var depot = depotFilesData.DepotDownloadInfo;
         var depotCounter = depotFilesData.DepotCounter;
@@ -58,7 +58,7 @@ internal static class DepotFileDownloader
             await DownloadChunkAsync(
                 cts, downloadCounter, depotFilesData,
                 q.fileData, q.fileStreamData, q.chunk,
-                cdnPool, steam3, userInterface, progressContext
+                cdnPool, steam3, userInterface, progressCallback
             );
         });
 
@@ -301,7 +301,7 @@ internal static class DepotFileDownloader
         CdnClientPool cdnPool,
         Steam3Session steam3,
         IUserInterface userInterface,
-        DownloadProgressContext progressContext = null)
+        DownloadProgressCallback progressCallback = null)
     {
         cts.Token.ThrowIfCancellationRequested();
 
@@ -439,6 +439,7 @@ internal static class DepotFileDownloader
 
         ulong sizeDownloaded;
         ulong totalBytesDownloaded;
+        int filesCompleted;
         lock (depotDownloadCounter)
         {
             sizeDownloaded = depotDownloadCounter.SizeDownloaded + (ulong)written;
@@ -452,20 +453,37 @@ internal static class DepotFileDownloader
             downloadCounter.TotalBytesCompressed += chunk.CompressedLength;
             downloadCounter.TotalBytesUncompressed += chunk.UncompressedLength;
             totalBytesDownloaded = downloadCounter.TotalBytesDownloaded += chunk.UncompressedLength;
+
+            // Track file completion and current file
+            if (remainingChunks == 0) downloadCounter.FilesCompleted++;
+            downloadCounter.CurrentFile = file.FileName;
+            filesCompleted = downloadCounter.FilesCompleted;
         }
 
         // Update global progress
         userInterface?.UpdateProgress(totalBytesDownloaded, downloadCounter.TotalDownloadSize);
 
-        // Fire progress event if context is provided
-        var fileCompleted = remainingChunks == 0;
-        progressContext?.ReportProgress(
-            (ulong)written,
-            file.FileName,
-            depot.DepotId,
-            fileCompleted);
+        // Fire progress callback
+        if (progressCallback is not null)
+        {
+            var speed = downloadCounter.UpdateSpeed();
+            var eta = downloadCounter.GetEstimatedTimeRemaining();
 
-        if (fileCompleted)
+            var args = new DownloadProgressEventArgs
+            {
+                BytesDownloaded = totalBytesDownloaded,
+                TotalBytes = downloadCounter.TotalDownloadSize,
+                CurrentFile = file.FileName,
+                FilesCompleted = filesCompleted,
+                TotalFiles = downloadCounter.TotalFiles,
+                SpeedBytesPerSecond = speed,
+                EstimatedTimeRemaining = eta
+            };
+
+            progressCallback(args);
+        }
+
+        if (remainingChunks == 0)
         {
             var fileFinalPath = Path.Combine(depot.InstallDir, file.FileName);
             userInterface?.WriteLine("{0,6:#00.00}% {1}",

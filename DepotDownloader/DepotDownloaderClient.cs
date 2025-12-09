@@ -1,10 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using SteamKit2;
 
@@ -52,7 +50,8 @@ public sealed class DepotDownloaderClient : IDisposable
     }
 
     /// <summary>
-    ///     Event raised when download progress is updated.
+    ///     Event raised when download progress changes.
+    ///     Includes bytes downloaded, speed, ETA, and file information.
     /// </summary>
     public event EventHandler<DownloadProgressEventArgs> DownloadProgress;
 
@@ -267,6 +266,7 @@ public sealed class DepotDownloaderClient : IDisposable
     /// <exception cref="ArgumentException">When AppId is not specified.</exception>
     /// <exception cref="ContentDownloaderException">When download fails.</exception>
     /// <exception cref="InsufficientDiskSpaceException">When there is not enough disk space and VerifyDiskSpace is true.</exception>
+    /// <exception cref="OperationCanceledException">When the operation is cancelled via CancellationToken.</exception>
     public async Task DownloadAppAsync(DepotDownloadOptions options)
     {
         ThrowIfDisposed();
@@ -290,18 +290,11 @@ public sealed class DepotDownloaderClient : IDisposable
                     spaceCheck.TargetDrive);
         }
 
-        // Create progress context if we have subscribers
-        DownloadProgressContext progressContext = null;
-        if (DownloadProgress is not null)
-        {
-            var plan = await GetDownloadPlanAsync(options);
-            progressContext = new DownloadProgressContext(
-                plan.TotalDownloadSize,
-                plan.TotalFileCount,
-                args => DownloadProgress?.Invoke(this, args));
-        }
+        // Create progress callback if there are subscribers
+        DownloadProgressCallback progressCallback = null;
+        if (DownloadProgress is not null) progressCallback = args => DownloadProgress?.Invoke(this, args);
 
-        // Perform download with cancellation and progress support
+        // Perform download with cancellation token and progress callback
         await ContentDownloader.DownloadAppAsync(
             options.AppId,
             options.DepotManifestIds,
@@ -311,7 +304,7 @@ public sealed class DepotDownloaderClient : IDisposable
             options.Language,
             options.LowViolence,
             false,
-            progressContext, options.CancellationToken);
+            progressCallback, options.CancellationToken);
     }
 
     /// <summary>
@@ -383,93 +376,9 @@ public sealed class DepotDownloaderClient : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, nameof(DepotDownloaderClient));
     }
 
-    private static void ThrowIfNotLoggedIn()
+    private void ThrowIfNotLoggedIn()
     {
         if (ContentDownloader.Steam3 is null || !ContentDownloader.Steam3.IsLoggedOn)
             throw new InvalidOperationException("Must be logged in to Steam before querying app information.");
-    }
-}
-
-/// <summary>
-///     Internal context for tracking download progress and calculating speed/ETA.
-/// </summary>
-internal sealed class DownloadProgressContext(
-    ulong totalBytes,
-    int totalFiles,
-    Action<DownloadProgressEventArgs> progressCallback)
-{
-    private const int SpeedSampleWindowMs = 5000;
-    private readonly Lock _lock = new();
-
-    // Rolling average for speed calculation
-    private readonly Queue<(long timestamp, ulong bytes)> _speedSamples = new();
-    private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
-
-    private ulong _bytesDownloaded;
-    private uint _currentDepotId;
-    private string _currentFile;
-    private int _filesCompleted;
-
-    public ulong TotalBytes { get; } = totalBytes;
-    public int TotalFiles { get; } = totalFiles;
-
-    /// <summary>
-    ///     Reports progress for a chunk download.
-    /// </summary>
-    public void ReportProgress(ulong bytesDownloaded, string currentFile, uint depotId, bool fileCompleted)
-    {
-        lock (_lock)
-        {
-            _bytesDownloaded += bytesDownloaded;
-            _currentFile = currentFile;
-            _currentDepotId = depotId;
-
-            if (fileCompleted)
-                _filesCompleted++;
-
-            // Update speed samples
-            var now = _stopwatch.ElapsedMilliseconds;
-            _speedSamples.Enqueue((now, _bytesDownloaded));
-
-            // Remove old samples outside the window
-            while (_speedSamples.Count > 0 && _speedSamples.Peek().timestamp < now - SpeedSampleWindowMs)
-                _speedSamples.Dequeue();
-
-            // Calculate speed from samples
-            var speed = 0.0;
-            var eta = TimeSpan.MaxValue;
-
-            if (_speedSamples.Count >= 2)
-            {
-                var (timestamp, bytes) = _speedSamples.Peek();
-                var timeDelta = (now - timestamp) / 1000.0;
-                var bytesDelta = _bytesDownloaded - bytes;
-
-                if (timeDelta > 0)
-                {
-                    speed = bytesDelta / timeDelta;
-
-                    if (speed > 0)
-                    {
-                        var remainingBytes = TotalBytes - _bytesDownloaded;
-                        eta = TimeSpan.FromSeconds(remainingBytes / speed);
-                    }
-                }
-            }
-
-            var args = new DownloadProgressEventArgs
-            {
-                BytesDownloaded = _bytesDownloaded,
-                TotalBytes = TotalBytes,
-                CurrentFile = _currentFile,
-                FilesCompleted = _filesCompleted,
-                TotalFiles = TotalFiles,
-                SpeedBytesPerSecond = speed,
-                EstimatedTimeRemaining = eta,
-                CurrentDepotId = _currentDepotId
-            };
-
-            progressCallback?.Invoke(args);
-        }
     }
 }

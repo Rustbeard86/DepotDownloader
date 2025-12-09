@@ -1,10 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using SteamKit2;
 
 namespace DepotDownloader.Lib;
+
+/// <summary>
+///     Delegate for reporting download progress.
+/// </summary>
+/// <param name="args">Progress event arguments.</param>
+public delegate void DownloadProgressCallback(DownloadProgressEventArgs args);
 
 /// <summary>
 ///     Information about a depot to be downloaded.
@@ -58,10 +65,24 @@ internal sealed class FileStreamData : IDisposable
 /// </summary>
 internal sealed class GlobalDownloadCounter
 {
+    private readonly Stopwatch _speedStopwatch = new();
+    private ulong _lastBytesForSpeed;
+    private double _rollingSpeed;
+
     /// <summary>
     ///     Remaining bytes to download (decremented as files are validated/skipped).
     /// </summary>
     public ulong CompleteDownloadSize;
+
+    /// <summary>
+    ///     Current file being downloaded.
+    /// </summary>
+    public string CurrentFile;
+
+    /// <summary>
+    ///     Number of files completed.
+    /// </summary>
+    public int FilesCompleted;
 
     public ulong TotalBytesCompressed;
 
@@ -76,6 +97,57 @@ internal sealed class GlobalDownloadCounter
     ///     Total size of all files to download (set once before downloading begins).
     /// </summary>
     public ulong TotalDownloadSize;
+
+    /// <summary>
+    ///     Total number of files to download.
+    /// </summary>
+    public int TotalFiles;
+
+    /// <summary>
+    ///     Starts speed tracking.
+    /// </summary>
+    public void StartSpeedTracking()
+    {
+        _speedStopwatch.Start();
+        _lastBytesForSpeed = 0;
+    }
+
+    /// <summary>
+    ///     Updates and returns the rolling average download speed in bytes per second.
+    /// </summary>
+    public double UpdateSpeed()
+    {
+        var elapsed = _speedStopwatch.Elapsed.TotalSeconds;
+        if (elapsed < 0.5)
+            return _rollingSpeed;
+
+        var bytesDelta = TotalBytesDownloaded - _lastBytesForSpeed;
+        var currentSpeed = bytesDelta / elapsed;
+
+        // Exponential moving average for smoother speed display
+        _rollingSpeed = _rollingSpeed == 0
+            ? currentSpeed
+            : _rollingSpeed * 0.7 + currentSpeed * 0.3;
+
+        _lastBytesForSpeed = TotalBytesDownloaded;
+        _speedStopwatch.Restart();
+
+        return _rollingSpeed;
+    }
+
+    /// <summary>
+    ///     Gets the estimated time remaining based on current speed.
+    /// </summary>
+    public TimeSpan GetEstimatedTimeRemaining()
+    {
+        if (_rollingSpeed <= 0 || TotalBytesDownloaded >= TotalDownloadSize)
+            return TimeSpan.Zero;
+
+        var remainingBytes = TotalDownloadSize - TotalBytesDownloaded;
+        var seconds = remainingBytes / _rollingSpeed;
+
+        return TimeSpan.FromSeconds(Math.Min(seconds, TimeSpan.MaxValue.TotalSeconds - 1));
+    }
 }
 
 /// <summary>

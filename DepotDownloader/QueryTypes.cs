@@ -95,7 +95,7 @@ public record DiskSpaceCheckResult(
     string TargetDrive);
 
 /// <summary>
-///     Event arguments for download progress reporting.
+///     Event arguments for download progress updates.
 /// </summary>
 public class DownloadProgressEventArgs : EventArgs
 {
@@ -110,7 +110,7 @@ public class DownloadProgressEventArgs : EventArgs
     public ulong TotalBytes { get; init; }
 
     /// <summary>
-    ///     The current file being downloaded, or null if between files.
+    ///     Current file being downloaded, if known.
     /// </summary>
     public string CurrentFile { get; init; }
 
@@ -130,19 +130,14 @@ public class DownloadProgressEventArgs : EventArgs
     public double SpeedBytesPerSecond { get; init; }
 
     /// <summary>
-    ///     Estimated time remaining based on current speed.
+    ///     Estimated time remaining for the download.
     /// </summary>
     public TimeSpan EstimatedTimeRemaining { get; init; }
 
     /// <summary>
-    ///     Current depot being downloaded.
-    /// </summary>
-    public uint CurrentDepotId { get; init; }
-
-    /// <summary>
     ///     Progress percentage (0-100).
     /// </summary>
-    public double ProgressPercent => TotalBytes > 0 ? (double)BytesDownloaded / TotalBytes * 100.0 : 0.0;
+    public double ProgressPercent => TotalBytes > 0 ? BytesDownloaded / (double)TotalBytes * 100.0 : 0;
 }
 
 /// <summary>
