@@ -6,147 +6,154 @@ using System.Text.Json.Serialization;
 namespace DepotDownloader.Client;
 
 /// <summary>
+///     Source-generated JSON serialization context for CLI output types.
+/// </summary>
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(ErrorResultJson))]
+[JsonSerializable(typeof(DownloadResultJson))]
+[JsonSerializable(typeof(DepotsResultJson))]
+[JsonSerializable(typeof(BranchesResultJson))]
+[JsonSerializable(typeof(DryRunResultJson))]
+internal partial class JsonOutputContext : JsonSerializerContext;
+
+/// <summary>
 ///     JSON output models and serialization helpers for CLI output.
 /// </summary>
 internal static class JsonOutput
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
     public static void WriteSuccess(DownloadResultJson result)
     {
-        Console.WriteLine(JsonSerializer.Serialize(result, SerializerOptions));
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.DownloadResultJson));
     }
 
     public static void WriteError(string error)
     {
         var result = new ErrorResultJson { Success = false, Error = error };
-        Console.WriteLine(JsonSerializer.Serialize(result, SerializerOptions));
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.ErrorResultJson));
     }
 
     public static void WriteDepots(DepotsResultJson result)
     {
-        Console.WriteLine(JsonSerializer.Serialize(result, SerializerOptions));
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.DepotsResultJson));
     }
 
     public static void WriteBranches(BranchesResultJson result)
     {
-        Console.WriteLine(JsonSerializer.Serialize(result, SerializerOptions));
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.BranchesResultJson));
     }
 
     public static void WriteDryRun(DryRunResultJson result)
     {
-        Console.WriteLine(JsonSerializer.Serialize(result, SerializerOptions));
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOutputContext.Default.DryRunResultJson));
     }
 }
 
 /// <summary>
 ///     Base result with success/error status.
 /// </summary>
-internal record ErrorResultJson
+internal sealed class ErrorResultJson
 {
-    public bool Success { get; init; }
-    public string Error { get; init; }
+    public bool Success { get; set; }
+    public string Error { get; set; }
 }
 
 /// <summary>
 ///     Result of a successful download operation.
 /// </summary>
-internal record DownloadResultJson
+internal sealed class DownloadResultJson
 {
-    public bool Success { get; init; } = true;
-    public uint AppId { get; init; }
-    public string Status { get; init; } = "completed";
-    public double DurationSeconds { get; init; }
+    public bool Success { get; set; } = true;
+    public uint AppId { get; set; }
+    public string Status { get; set; } = "completed";
+    public double DurationSeconds { get; set; }
 }
 
 /// <summary>
 ///     Result of listing depots.
 /// </summary>
-internal record DepotsResultJson
+internal sealed class DepotsResultJson
 {
-    public bool Success { get; init; } = true;
-    public uint AppId { get; init; }
-    public string AppName { get; init; }
-    public string AppType { get; init; }
-    public List<DepotJson> Depots { get; init; }
+    public bool Success { get; set; } = true;
+    public uint AppId { get; set; }
+    public string AppName { get; set; }
+    public string AppType { get; set; }
+    public List<DepotJson> Depots { get; set; }
 }
 
 /// <summary>
 ///     Depot information for JSON output.
 /// </summary>
-internal record DepotJson
+internal sealed class DepotJson
 {
-    public uint DepotId { get; init; }
-    public string Name { get; init; }
-    public string Os { get; init; }
-    public string Architecture { get; init; }
-    public string Language { get; init; }
-    public ulong? MaxSize { get; init; }
-    public bool IsSharedInstall { get; init; }
+    public uint DepotId { get; set; }
+    public string Name { get; set; }
+    public string Os { get; set; }
+    public string Architecture { get; set; }
+    public string Language { get; set; }
+    public ulong? MaxSize { get; set; }
+    public bool IsSharedInstall { get; set; }
 }
 
 /// <summary>
 ///     Result of listing branches.
 /// </summary>
-internal record BranchesResultJson
+internal sealed class BranchesResultJson
 {
-    public bool Success { get; init; } = true;
-    public uint AppId { get; init; }
-    public string AppName { get; init; }
-    public List<BranchJson> Branches { get; init; }
+    public bool Success { get; set; } = true;
+    public uint AppId { get; set; }
+    public string AppName { get; set; }
+    public List<BranchJson> Branches { get; set; }
 }
 
 /// <summary>
 ///     Branch information for JSON output.
 /// </summary>
-internal record BranchJson
+internal sealed class BranchJson
 {
-    public string Name { get; init; }
-    public uint BuildId { get; init; }
-    public DateTime? TimeUpdated { get; init; }
-    public bool IsPasswordProtected { get; init; }
-    public string Description { get; init; }
+    public string Name { get; set; }
+    public uint BuildId { get; set; }
+    public DateTime? TimeUpdated { get; set; }
+    public bool IsPasswordProtected { get; set; }
+    public string Description { get; set; }
 }
 
 /// <summary>
 ///     Result of a dry-run operation.
 /// </summary>
-internal record DryRunResultJson
+internal sealed class DryRunResultJson
 {
-    public bool Success { get; init; } = true;
-    public uint AppId { get; init; }
-    public string AppName { get; init; }
-    public int TotalDepots { get; init; }
-    public int TotalFiles { get; init; }
-    public ulong TotalBytes { get; init; }
-    public string TotalSize { get; init; }
-    public List<DepotPlanJson> Depots { get; init; }
+    public bool Success { get; set; } = true;
+    public uint AppId { get; set; }
+    public string AppName { get; set; }
+    public int TotalDepots { get; set; }
+    public int TotalFiles { get; set; }
+    public ulong TotalBytes { get; set; }
+    public string TotalSize { get; set; }
+    public List<DepotPlanJson> Depots { get; set; }
 }
 
 /// <summary>
 ///     Depot download plan for JSON output.
 /// </summary>
-internal record DepotPlanJson
+internal sealed class DepotPlanJson
 {
-    public uint DepotId { get; init; }
-    public ulong ManifestId { get; init; }
-    public int FileCount { get; init; }
-    public ulong TotalBytes { get; init; }
-    public string TotalSize { get; init; }
-    public List<FilePlanJson> Files { get; init; }
+    public uint DepotId { get; set; }
+    public ulong ManifestId { get; set; }
+    public int FileCount { get; set; }
+    public ulong TotalBytes { get; set; }
+    public string TotalSize { get; set; }
+    public List<FilePlanJson> Files { get; set; }
 }
 
 /// <summary>
 ///     File information for dry-run JSON output.
 /// </summary>
-internal record FilePlanJson
+internal sealed class FilePlanJson
 {
-    public string FileName { get; init; }
-    public ulong Size { get; init; }
-    public string Hash { get; init; }
+    public string FileName { get; set; }
+    public ulong Size { get; set; }
+    public string Hash { get; set; }
 }

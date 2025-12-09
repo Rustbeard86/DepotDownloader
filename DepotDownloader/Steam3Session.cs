@@ -5,6 +5,8 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SteamKit2;
 using SteamKit2.Authentication;
 using SteamKit2.CDN;
@@ -27,6 +29,9 @@ internal class Steam3Session
 
     // Configuration
     private readonly DownloadConfig _config;
+
+    // Logging
+    private readonly ILogger _logger;
     private readonly SteamUser.LogOnDetails _logonDetails;
     private readonly SteamApps _steamApps;
     private readonly SteamCloud _steamCloud;
@@ -49,12 +54,16 @@ internal class Steam3Session
     public SteamContent SteamContent;
     public SteamUser SteamUser;
 
-    public Steam3Session(SteamUser.LogOnDetails details, IUserInterface userInterface, DownloadConfig config)
+    public Steam3Session(SteamUser.LogOnDetails details, IUserInterface userInterface, DownloadConfig config,
+        ILogger logger = null)
     {
         _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
         _config = config ?? throw new ArgumentNullException(nameof(config));
+        _logger = logger ?? NullLogger.Instance;
         _logonDetails = details;
         _authenticatedUser = details.Username is not null || _config.UseQrCode;
+
+        _logger.CreatingSteam3Session(_authenticatedUser);
 
         var clientConfiguration = SteamConfiguration.Create(c =>
             c.WithHttpClientFactory(static _ => HttpClientFactory.CreateHttpClient())
@@ -151,10 +160,15 @@ internal class Steam3Session
         if ((AppInfo.ContainsKey(appId) && !bForce) || _bAborted)
             return;
 
+        _logger.RequestingAppInfo(appId);
+
         var appTokens = await _steamApps.PICSGetAccessTokens([appId], []);
 
         if (appTokens.AppTokensDenied.Contains(appId))
+        {
+            _logger.AccessTokenDenied(appId);
             _userInterface.WriteLine("Insufficient privileges to get access token for app {0}", appId);
+        }
 
         foreach (var tokenDict in appTokens.AppTokens) AppTokens[tokenDict.Key] = tokenDict.Value;
 
@@ -171,6 +185,7 @@ internal class Steam3Session
                 {
                     var app = appValue.Value;
 
+                    _logger.GotAppInfo(app.ID);
                     _userInterface.WriteLine("Got AppInfo for {0}", app.ID);
                     AppInfo[app.ID] = app;
                 }
@@ -233,8 +248,11 @@ internal class Steam3Session
         if (DepotKeys.ContainsKey(depotId) || _bAborted)
             return;
 
+        _logger.RequestingDepotKey(depotId, appid);
+
         var depotKey = await _steamApps.GetDepotDecryptionKey(depotId, appid);
 
+        _logger.GotDepotKey(depotKey.DepotID, depotKey.Result);
         _userInterface.WriteLine("Got depot key for {0} result: {1}", depotKey.DepotID, depotKey.Result);
 
         if (depotKey.Result != EResult.OK) return;
@@ -575,6 +593,8 @@ internal class Steam3Session
 
     private void LogOnCallback(SteamUser.LoggedOnCallback loggedOn)
     {
+        _logger.LogOnCallback(loggedOn.Result);
+
         var isSteamGuard = loggedOn.Result == EResult.AccountLogonDenied;
         var is2Fa = loggedOn.Result == EResult.AccountLoginDeniedNeedTwoFactor;
         var isAccessToken = _config.RememberPassword && _logonDetails.AccessToken is not null &&
@@ -699,12 +719,14 @@ internal class Steam3Session
     {
         if (licenseList.Result != EResult.OK)
         {
+            _logger.FailedToGetLicenseList(licenseList.Result);
             _userInterface.WriteLine("Unable to get license list: {0} ", licenseList.Result);
             Abort();
 
             return;
         }
 
+        _logger.GotLicenses(licenseList.LicenseList.Count);
         _userInterface.WriteLine("Got {0} licenses for account!", licenseList.LicenseList.Count);
         Licenses = licenseList.LicenseList;
 

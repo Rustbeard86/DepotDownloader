@@ -6,6 +6,8 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SteamKit2;
 using SteamKit2.CDN;
 
@@ -19,7 +21,7 @@ public class ContentDownloaderException(string value) : Exception(value);
 /// <summary>
 ///     Instance-based content downloader that supports concurrent download sessions.
 /// </summary>
-internal sealed class ContentDownloader : IDisposable
+internal sealed class ContentDownloader(IUserInterface userInterface, ILogger logger = null) : IDisposable
 {
     // Constants for validation sentinel values (reference public constants)
     public const uint InvalidAppId = SteamConstants.InvalidAppId;
@@ -42,24 +44,18 @@ internal sealed class ContentDownloader : IDisposable
         EWorkshopFileType.ControllerBinding
     }.ToFrozenSet();
 
-    private readonly IUserInterface _userInterface;
+    private readonly ILogger _logger = logger ?? NullLogger.Instance;
+
+    private readonly IUserInterface _userInterface =
+        userInterface ?? throw new ArgumentNullException(nameof(userInterface));
+
     private CdnClientPool _cdnPool;
     private bool _disposed;
 
     /// <summary>
-    ///     Creates a new content downloader instance.
-    /// </summary>
-    /// <param name="userInterface">Interface for user interaction and output.</param>
-    public ContentDownloader(IUserInterface userInterface)
-    {
-        _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
-        Config = new DownloadConfig();
-    }
-
-    /// <summary>
     ///     Configuration for this download session.
     /// </summary>
-    public DownloadConfig Config { get; }
+    public DownloadConfig Config { get; } = new();
 
     /// <summary>
     ///     Gets the current Steam3 session, or null if not initialized.
@@ -76,6 +72,7 @@ internal sealed class ContentDownloader : IDisposable
         if (_disposed)
             return;
 
+        _logger.DisposingContentDownloader();
         Steam3?.Disconnect();
         _disposed = true;
     }
@@ -85,6 +82,8 @@ internal sealed class ContentDownloader : IDisposable
     /// </summary>
     public bool InitializeSteam3(string username, string password)
     {
+        _logger.InitializingSteam3(username ?? "(anonymous)");
+
         string loginToken = null;
 
         if (username is not null && Config.RememberPassword)
@@ -100,15 +99,18 @@ internal sealed class ContentDownloader : IDisposable
                 LoginID = Config.LoginId ?? 0x534B32
             },
             _userInterface,
-            Config
+            Config,
+            _logger
         );
 
         if (!Steam3.WaitForCredentials())
         {
+            _logger.FailedToGetCredentials();
             _userInterface?.WriteLine("Unable to get steam3 credentials.");
             return false;
         }
 
+        _logger.Steam3Initialized();
         Task.Run(Steam3.TickCallbacks);
 
         return true;
@@ -119,6 +121,7 @@ internal sealed class ContentDownloader : IDisposable
     /// </summary>
     public void ShutdownSteam3()
     {
+        _logger.ShuttingDownSteam3();
         Steam3?.Disconnect();
         AppInfoService.ClearCache();
     }
@@ -421,6 +424,8 @@ internal sealed class ContentDownloader : IDisposable
     {
         if (Steam3 is null)
             throw new InvalidOperationException("Steam3 must be initialized before downloading.");
+
+        _logger.StartingDownload(appId, branch, depotManifestIds.Count);
 
         // Check for cancellation early
         cancellationToken.ThrowIfCancellationRequested();

@@ -75,11 +75,6 @@ internal sealed class GlobalDownloadCounter
     public ulong CompleteDownloadSize;
 
     /// <summary>
-    ///     Current file being downloaded.
-    /// </summary>
-    public string CurrentFile;
-
-    /// <summary>
     ///     Number of files completed.
     /// </summary>
     public int FilesCompleted;

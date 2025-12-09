@@ -454,9 +454,8 @@ internal static class DepotFileDownloader
             downloadCounter.TotalBytesUncompressed += chunk.UncompressedLength;
             totalBytesDownloaded = downloadCounter.TotalBytesDownloaded += chunk.UncompressedLength;
 
-            // Track file completion and current file
+            // Track file completion
             if (remainingChunks == 0) downloadCounter.FilesCompleted++;
-            downloadCounter.CurrentFile = file.FileName;
             filesCompleted = downloadCounter.FilesCompleted;
         }
 

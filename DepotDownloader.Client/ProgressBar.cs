@@ -5,19 +5,11 @@ namespace DepotDownloader.Client;
 /// <summary>
 ///     ANSI-based progress bar for console display.
 /// </summary>
-internal sealed class ProgressBar
+internal sealed class ProgressBar(int barWidth = ProgressBar.DefaultBarWidth)
 {
     private const int DefaultBarWidth = 40;
-    private readonly int _barWidth;
-    private readonly bool _useAnsi;
+    private readonly bool _useAnsi = !Console.IsOutputRedirected && SupportsAnsi();
     private int _lastLineLength;
-
-    public ProgressBar(int barWidth = DefaultBarWidth)
-    {
-        _barWidth = barWidth;
-        // Check if we can use ANSI escape codes (not redirected, supports virtual terminal)
-        _useAnsi = !Console.IsOutputRedirected && SupportsAnsi();
-    }
 
     /// <summary>
     ///     Updates the progress bar display.
@@ -40,8 +32,8 @@ internal sealed class ProgressBar
             return;
 
         var percent = totalBytes > 0 ? (double)bytesDownloaded / totalBytes : 0;
-        var filledWidth = (int)(percent * _barWidth);
-        var emptyWidth = _barWidth - filledWidth;
+        var filledWidth = (int)(percent * barWidth);
+        var emptyWidth = barWidth - filledWidth;
 
         var bar = new string('█', filledWidth) + new string('░', emptyWidth);
         var percentStr = $"{percent * 100:F1}%";

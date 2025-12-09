@@ -434,7 +434,7 @@ foreach (var branch in branches)
 
 ### Download Planning
 
-Check what will be downloaded before starting, and verify disk space:
+Check what will be downloaded before starting:
 
 ```csharp
 var options = new DepotDownloadOptions
@@ -452,17 +452,11 @@ foreach (var depot in plan.Depots)
     Console.WriteLine($"  Depot {depot.DepotId}: {depot.Files.Count} files, {depot.TotalSize / 1024.0 / 1024:F1} MB");
 }
 
-// Check disk space before downloading
-var spaceCheck = await client.CheckDiskSpaceAsync(options);
-if (!spaceCheck.HasSufficientSpace)
-{
-    Console.WriteLine($"Insufficient disk space on {spaceCheck.TargetDrive}!");
-    Console.WriteLine($"Required: {spaceCheck.RequiredBytes / 1024.0 / 1024 / 1024:F2} GB");
-    Console.WriteLine($"Available: {spaceCheck.AvailableBytes / 1024.0 / 1024 / 1024:F2} GB");
-    return;
-}
+// Get required disk space
+var requiredSpace = await client.GetRequiredDiskSpaceAsync(options);
+Console.WriteLine($"Required space: {requiredSpace / 1024.0 / 1024 / 1024:F2} GB");
 
-// Proceed with download
+// Proceed with download (disk space is checked automatically)
 await client.DownloadAppAsync(options);
 ```
 
@@ -708,10 +702,18 @@ var options = new DepotDownloadOptions
 
 ### Debug Logging
 
-```csharp
-using var client = new DepotDownloaderClient(myUserInterface);
+The library supports `Microsoft.Extensions.Logging` for diagnostic output:
 
-// Enable verbose logging (SteamKit2 + HTTP diagnostics)
+```csharp
+using Microsoft.Extensions.Logging;
+
+// With a logger factory (e.g., from DI)
+var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+var logger = loggerFactory.CreateLogger<DepotDownloaderClient>();
+
+using var client = new DepotDownloaderClient(myUserInterface, logger);
+
+// Or enable SteamKit2 debug logging
 client.EnableDebugLogging();
 
 // Debug output goes to IUserInterface.WriteDebug()
@@ -725,7 +727,7 @@ client.EnableDebugLogging();
 
 | Member | Description |
 |--------|-------------|
-| `DepotDownloaderClient(IUserInterface)` | Creates a new client instance |
+| `DepotDownloaderClient(IUserInterface, ILogger)` | Creates a new client instance with optional logger |
 | `DownloadProgress` | Event raised when download progress changes |
 | `Login(username, password, rememberPassword, skipAppConfirmation)` | Authenticate with credentials |
 | `LoginAnonymous(skipAppConfirmation)` | Anonymous authentication |
@@ -733,8 +735,8 @@ client.EnableDebugLogging();
 | `GetAppInfoAsync(appId)` | Get app name and type |
 | `GetDepotsAsync(appId)` | List all depots for an app |
 | `GetBranchesAsync(appId)` | List all branches for an app |
+| `GetLatestManifestIdAsync(appId, depotId, branch, password)` | Get latest manifest ID for a depot |
 | `GetDownloadPlanAsync(options)` | Get download plan without downloading |
-| `CheckDiskSpaceAsync(options)` | Check if sufficient disk space is available |
 | `GetRequiredDiskSpaceAsync(options)` | Get required download size in bytes |
 | `DownloadAppAsync(DepotDownloadOptions)` | Download app content |
 | `DownloadPublishedFileAsync(appId, publishedFileId)` | Download workshop item |
@@ -836,12 +838,13 @@ options.MaxDownloads = 16;
 ```
 
 ```csharp
-// Library - use CheckDiskSpaceAsync
-var result = await client.CheckDiskSpaceAsync(options);
-if (!result.HasSufficientSpace)
-{
-    Console.WriteLine($"Need {result.RequiredBytes} bytes, only {result.AvailableBytes} available");
-}
+// Library - disk space is verified automatically before download
+// To get required space without downloading:
+var requiredSpace = await client.GetRequiredDiskSpaceAsync(options);
+Console.WriteLine($"Need {requiredSpace} bytes");
+
+// Disable automatic disk space check if needed:
+options.VerifyDiskSpace = false;
 ```
 
 ---

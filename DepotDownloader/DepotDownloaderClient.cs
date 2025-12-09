@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SteamKit2;
 
 namespace DepotDownloader.Lib;
@@ -21,9 +23,13 @@ public sealed class DepotDownloaderClient : IDisposable
     ///     Creates a new DepotDownloader client.
     /// </summary>
     /// <param name="userInterface">Interface for user interaction. Uses NullUserInterface if not provided.</param>
-    public DepotDownloaderClient(IUserInterface userInterface = null)
+    /// <param name="logger">Optional logger for diagnostic output.</param>
+    public DepotDownloaderClient(IUserInterface userInterface = null, ILogger<DepotDownloaderClient> logger = null)
     {
         _userInterface = userInterface ?? new NullUserInterface();
+        ILogger logger1 = logger ?? NullLogger<DepotDownloaderClient>.Instance;
+
+        logger1.InitializingClient();
 
         // Initialize stores
         AccountSettingsStore.Initialize(_userInterface);
@@ -31,10 +37,12 @@ public sealed class DepotDownloaderClient : IDisposable
         Util.Initialize(_userInterface);
 
         // Create the instance-based downloader
-        _downloader = new ContentDownloader(_userInterface);
+        _downloader = new ContentDownloader(_userInterface, logger1);
 
         // Load account settings
         AccountSettingsStore.LoadFromFile("account.config");
+
+        logger1.ClientInitialized();
     }
 
     /// <summary>
@@ -192,6 +200,44 @@ public sealed class DepotDownloaderClient : IDisposable
     }
 
     /// <summary>
+    ///     Gets the latest manifest ID for a specific depot on a branch.
+    /// </summary>
+    /// <param name="appId">The Steam application ID.</param>
+    /// <param name="depotId">The depot ID.</param>
+    /// <param name="branch">The branch name (default: "public").</param>
+    /// <param name="branchPassword">Password for password-protected branches.</param>
+    /// <returns>The manifest ID, or null if not found or not accessible.</returns>
+    /// <exception cref="InvalidOperationException">When not logged in.</exception>
+    public async Task<ulong?> GetLatestManifestIdAsync(
+        uint appId,
+        uint depotId,
+        string branch = SteamConstants.DefaultBranch,
+        string branchPassword = null)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+
+        await _downloader.Steam3.RequestAppInfo(appId);
+
+        // Check access
+        if (!await AppInfoService.AccountHasAccessAsync(_downloader.Steam3, appId, depotId))
+            return null;
+
+        var manifestId = await AppInfoService.GetDepotManifestAsync(
+            _downloader.Steam3,
+            depotId,
+            appId,
+            branch,
+            branchPassword,
+            null); // No user interface output needed for this query
+
+        if (manifestId == SteamConstants.InvalidManifestId)
+            return null;
+
+        return manifestId;
+    }
+
+    /// <summary>
     ///     Gets a download plan showing what would be downloaded without actually downloading.
     /// </summary>
     /// <param name="options">Download configuration options.</param>
@@ -218,34 +264,6 @@ public sealed class DepotDownloaderClient : IDisposable
             options.Language,
             options.LowViolence
         );
-    }
-
-    /// <summary>
-    ///     Checks if there is sufficient disk space for a download.
-    /// </summary>
-    /// <param name="options">Download configuration options.</param>
-    /// <returns>A result indicating available space, required space, and whether there's enough.</returns>
-    /// <exception cref="InvalidOperationException">When not logged in.</exception>
-    public async Task<DiskSpaceCheckResult> CheckDiskSpaceAsync(DepotDownloadOptions options)
-    {
-        ThrowIfDisposed();
-        ThrowIfNotLoggedIn();
-
-        var plan = await GetDownloadPlanAsync(options);
-        var requiredBytes = plan.TotalDownloadSize;
-
-        var targetPath = options.InstallDirectory ?? Environment.CurrentDirectory;
-        var fullPath = Path.GetFullPath(targetPath);
-        var root = Path.GetPathRoot(fullPath) ?? fullPath;
-        var driveInfo = new DriveInfo(root);
-
-        var availableBytes = (ulong)driveInfo.AvailableFreeSpace;
-
-        return new DiskSpaceCheckResult(
-            availableBytes >= requiredBytes,
-            requiredBytes,
-            availableBytes,
-            root);
     }
 
     /// <summary>
@@ -284,7 +302,7 @@ public sealed class DepotDownloaderClient : IDisposable
         // Check disk space if enabled
         if (options.VerifyDiskSpace && !options.DownloadManifestOnly)
         {
-            var spaceCheck = await CheckDiskSpaceAsync(options);
+            var spaceCheck = await VerifyDiskSpaceAsync(options);
             if (!spaceCheck.HasSufficientSpace)
                 throw new InsufficientDiskSpaceException(
                     spaceCheck.RequiredBytes,
@@ -378,5 +396,33 @@ public sealed class DepotDownloaderClient : IDisposable
     {
         if (!_downloader.IsLoggedOn)
             throw new InvalidOperationException("Must be logged in to Steam before querying app information.");
+    }
+
+    /// <summary>
+    ///     Checks if there is sufficient disk space for a download.
+    /// </summary>
+    /// <param name="options">Download configuration options.</param>
+    /// <returns>A result indicating available space, required space, and whether there's enough.</returns>
+    /// <exception cref="InvalidOperationException">When not logged in.</exception>
+    private async Task<DiskSpaceCheckResult> VerifyDiskSpaceAsync(DepotDownloadOptions options)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+
+        var plan = await GetDownloadPlanAsync(options);
+        var requiredBytes = plan.TotalDownloadSize;
+
+        var targetPath = options.InstallDirectory ?? Environment.CurrentDirectory;
+        var fullPath = Path.GetFullPath(targetPath);
+        var root = Path.GetPathRoot(fullPath) ?? fullPath;
+        var driveInfo = new DriveInfo(root);
+
+        var availableBytes = (ulong)driveInfo.AvailableFreeSpace;
+
+        return new DiskSpaceCheckResult(
+            availableBytes >= requiredBytes,
+            requiredBytes,
+            availableBytes,
+            root);
     }
 }

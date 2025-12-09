@@ -12,7 +12,7 @@ public sealed class DepotDownloadOptions
     /// <summary>
     ///     The Steam AppID to download.
     /// </summary>
-    public uint AppId { get; set; } = ContentDownloader.InvalidAppId;
+    public uint AppId { get; set; } = SteamConstants.InvalidAppId;
 
     /// <summary>
     ///     List of depot IDs and optional manifest IDs to download.
@@ -23,7 +23,7 @@ public sealed class DepotDownloadOptions
     /// <summary>
     ///     Branch name to download from (e.g., "public", "beta").
     /// </summary>
-    public string Branch { get; set; } = ContentDownloader.DefaultBranch;
+    public string Branch { get; set; } = SteamConstants.DefaultBranch;
 
     /// <summary>
     ///     Password for password-protected branches.
@@ -114,5 +114,5 @@ public sealed class DepotDownloadOptions
     ///     Cancellation token for graceful cancellation of download operations.
     ///     Allows GUI applications and services to cancel downloads.
     /// </summary>
-    public CancellationToken CancellationToken { get; set; } = CancellationToken.None;
+    public CancellationToken CancellationToken { get; init; } = CancellationToken.None;
 }
