@@ -671,6 +671,7 @@ await client.DownloadAppAsync(options);
 | `WithNoRetry()` | Disable retries |
 | `WithMaxSpeed(bytesPerSecond)` | Set max download speed (bytes/sec) |
 | `WithMaxSpeedMbps(mbPerSecond)` | Set max download speed (MB/s) |
+| `WithResume(enable)` | Enable resume support for interrupted downloads |
 | `Build()` | Create the options (throws if AppId not set) |
 
 **Retry Policy:**
@@ -694,6 +695,20 @@ var options = DepotDownloadOptionsBuilder.Create()
     .ForApp(730)
     .WithNoRetry()
     .Build();
+```
+
+**Resume Support:**
+```csharp
+// Enable resume for large downloads that may be interrupted
+var options = DepotDownloadOptionsBuilder.Create()
+    .ForApp(730)
+    .ToDirectory(@"C:\Games\CS2")
+    .WithResume()
+    .Build();
+
+// If download is interrupted (cancelled, crashed, network error),
+// run again with the same options to continue where it left off
+await client.DownloadAppAsync(options);
 ```
 
 **Speed Limiting:**
@@ -775,6 +790,9 @@ var options = new DepotDownloadOptions
     // Retry and throttling
     RetryPolicy = RetryPolicy.Default,    // exponential backoff with 5 retries
     MaxBytesPerSecond = null,             // null = unlimited
+    
+    // Resume support
+    Resume = false,                       // set to true to enable resume
     
     // File filtering
     FilesToDownload = new HashSet<string>
@@ -953,6 +971,7 @@ client.EnableDebugLogging();
 | `DownloadAppAsync(DepotDownloadOptions)` | Download app content |
 | `DownloadPublishedFileAsync(appId, publishedFileId)` | Download workshop item |
 | `DownloadUgcAsync(appId, ugcId)` | Download UGC content |
+| `Logout()` | Disconnect from Steam and clear cached data |
 | `EnableDebugLogging()` | Enable verbose logging |
 | `Dispose()` | Clean up resources |
 
@@ -1042,36 +1061,24 @@ options.MaxDownloads = 16;
 ./DepotDownloader -app 730 -use-lancache
 ```
 
-### How do I check if I have enough disk space?
+### How do I resume an interrupted download?
 
 ```powershell
-# CLI - use dry-run to see total size
-./DepotDownloader -app 730 -dry-run
+# CLI - use -resume flag
+./DepotDownloader -app 730 -dir "C:\Games\CS2" -resume
 ```
 
 ```csharp
-// Library - disk space is verified automatically before download
-// To get required space without downloading:
-var requiredSpace = await client.GetRequiredDiskSpaceAsync(options);
-Console.WriteLine($"Need {requiredSpace} bytes");
-
-// Disable automatic disk space check if needed:
-options.VerifyDiskSpace = false;
+// Library - enable resume in options
+var options = new DepotDownloadOptions
+{
+    AppId = 730,
+    InstallDirectory = @"C:\Games\CS2",
+    Resume = true
+};
+await client.DownloadAppAsync(options);
 ```
 
----
+Note: Resume requires an install directory to be set. The download state is stored in a `.DepotDownloader` folder within the install directory.
 
-## License
-
-This project is licensed under the [GNU General Public License v2.0](LICENSE).
-
----
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Credits
-
-- [SteamRE/DepotDownloader](https://github.com/SteamRE/DepotDownloader) - Original project
-- [SteamKit2](https://github.com/SteamRE/SteamKit) - Steam protocol library
+### How do I check if I have enough disk space?
