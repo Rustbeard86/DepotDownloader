@@ -610,7 +610,9 @@ public static class ContentDownloader
 
                 cts.Token.ThrowIfCancellationRequested();
 
-                Util.SaveManifestToFile(configDir, newManifest);
+                if (!Util.SaveManifestToFile(configDir, newManifest))
+                    _userInterface?.WriteLine("Warning: Failed to save manifest {0} for depot {1} to disk.",
+                        depot.ManifestId, depot.DepotId);
             }
         }
 
