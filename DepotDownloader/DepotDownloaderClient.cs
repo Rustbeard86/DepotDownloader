@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using SteamKit2;
@@ -209,6 +210,46 @@ public sealed class DepotDownloaderClient : IDisposable
             options.Language,
             options.LowViolence
         );
+    }
+
+    /// <summary>
+    ///     Checks if there is sufficient disk space for a download.
+    /// </summary>
+    /// <param name="options">Download configuration options.</param>
+    /// <returns>A result indicating available space, required space, and whether there's enough.</returns>
+    /// <exception cref="InvalidOperationException">When not logged in.</exception>
+    public async Task<DiskSpaceCheckResult> CheckDiskSpaceAsync(DepotDownloadOptions options)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+
+        var plan = await GetDownloadPlanAsync(options);
+        var requiredBytes = plan.TotalDownloadSize;
+
+        var targetPath = options.InstallDirectory ?? Environment.CurrentDirectory;
+        var fullPath = Path.GetFullPath(targetPath);
+        var root = Path.GetPathRoot(fullPath) ?? fullPath;
+        var driveInfo = new DriveInfo(root);
+
+        var availableBytes = (ulong)driveInfo.AvailableFreeSpace;
+
+        return new DiskSpaceCheckResult(
+            availableBytes >= requiredBytes,
+            requiredBytes,
+            availableBytes,
+            root);
+    }
+
+    /// <summary>
+    ///     Gets the required disk space for a download without checking availability.
+    /// </summary>
+    /// <param name="options">Download configuration options.</param>
+    /// <returns>The total download size in bytes.</returns>
+    /// <exception cref="InvalidOperationException">When not logged in.</exception>
+    public async Task<ulong> GetRequiredDiskSpaceAsync(DepotDownloadOptions options)
+    {
+        var plan = await GetDownloadPlanAsync(options);
+        return plan.TotalDownloadSize;
     }
 
     /// <summary>

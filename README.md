@@ -23,11 +23,14 @@ Supports **.NET 10.0** and later.
 - [CLI Usage](#cli-usage)
   - [Download an App](#download-an-app)
   - [Download Workshop Items](#download-workshop-items)
+  - [Discovery Commands](#discovery-commands)
   - [Authentication](#authentication)
   - [CLI Parameters Reference](#cli-parameters-reference)
 - [Library Usage](#library-usage)
   - [Quick Start](#quick-start)
   - [Authentication Methods](#authentication-methods)
+  - [Query APIs](#query-apis)
+  - [Download Planning](#download-planning)
   - [Download Options](#download-options)
   - [Custom User Interface](#custom-user-interface)
   - [Error Handling](#error-handling)
@@ -130,6 +133,58 @@ Using UGC ID:
 ./DepotDownloader -app 730 -ugc 770604181014286929
 ```
 
+### Discovery Commands
+
+Query app information without downloading:
+
+```powershell
+# List all depots for an app
+./DepotDownloader -app 730 -list-depots
+
+# List all branches for an app
+./DepotDownloader -app 730 -list-branches
+
+# Preview what would be downloaded (dry run)
+./DepotDownloader -app 730 -dry-run
+```
+
+**Example output for `-list-depots`:**
+
+```
+Depots for Counter-Strike 2 (730):
+
+  DepotID    Name                                     OS              Arch   Language   Size
+  ----------------------------------------------------------------------------------------------------
+  731        Counter-Strike 2 Content                 windows         -      -          15.1 GB
+  732        Counter-Strike 2 Content                 linux           -      -          14.8 GB
+
+Total: 2 depot(s)
+```
+
+**Example output for `-dry-run`:**
+
+```
+Download Plan for Counter-Strike 2 (730):
+
+  Depot 731 (Manifest 7617088375292372759)
+    Files: 1432
+    Size:  15.1 GB
+
+--------------------------------------------------
+
+Summary:
+  Total depots:     1
+  Total files:      1,432
+  Total size:       15.1 GB
+
+Estimated download time:
+  At 10 MB/s:  25 min 30 sec
+  At 50 MB/s:  5 min 6 sec
+  At 100 MB/s: 2 min 33 sec
+
+To download, run the same command without --dry-run
+```
+
 ### Authentication
 
 By default, DepotDownloader uses an anonymous account. Many games require authentication.
@@ -197,6 +252,14 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 | `-cellid <#>` | Override content server CellID |
 | `-use-lancache` | Route downloads through Lancache |
 
+#### Discovery & Planning
+
+| Parameter | Description |
+|-----------|-------------|
+| `-list-depots` | List all depots for the app and exit |
+| `-list-branches` | List all branches for the app and exit |
+| `-dry-run` | Show download plan without downloading |
+
 #### Other
 
 | Parameter | Description |
@@ -262,6 +325,70 @@ client.Login("username", "password", skipAppConfirmation: true);
 
 // QR code login (requires IUserInterface that supports DisplayQrCode)
 client.LoginWithQrCode(rememberPassword: true);
+```
+
+### Query APIs
+
+Query Steam app information without downloading:
+
+```csharp
+// Get app information
+var appInfo = await client.GetAppInfoAsync(730);
+Console.WriteLine($"App: {appInfo.Name} (Type: {appInfo.Type})");
+
+// List all depots
+var depots = await client.GetDepotsAsync(730);
+foreach (var depot in depots)
+{
+    Console.WriteLine($"Depot {depot.DepotId}: {depot.Name}");
+    Console.WriteLine($"  OS: {depot.Os ?? "all"}, Arch: {depot.Architecture ?? "any"}");
+    if (depot.MaxSize.HasValue)
+        Console.WriteLine($"  Size: {depot.MaxSize.Value / 1024 / 1024 / 1024.0:F1} GB");
+}
+
+// List all branches
+var branches = await client.GetBranchesAsync(730);
+foreach (var branch in branches)
+{
+    Console.WriteLine($"Branch: {branch.Name}");
+    Console.WriteLine($"  Build: {branch.BuildId}");
+    Console.WriteLine($"  Updated: {branch.TimeUpdated}");
+    Console.WriteLine($"  Password Protected: {branch.IsPasswordProtected}");
+}
+```
+
+### Download Planning
+
+Check what will be downloaded before starting, and verify disk space:
+
+```csharp
+var options = new DepotDownloadOptions
+{
+    AppId = 730,
+    InstallDirectory = @"C:\Games\CS2"
+};
+
+// Get download plan (dry run)
+var plan = await client.GetDownloadPlanAsync(options);
+Console.WriteLine($"Would download {plan.TotalFileCount:N0} files ({plan.TotalDownloadSize / 1024.0 / 1024 / 1024:F2} GB)");
+
+foreach (var depot in plan.Depots)
+{
+    Console.WriteLine($"  Depot {depot.DepotId}: {depot.Files.Count} files, {depot.TotalSize / 1024.0 / 1024:F1} MB");
+}
+
+// Check disk space before downloading
+var spaceCheck = await client.CheckDiskSpaceAsync(options);
+if (!spaceCheck.HasSufficientSpace)
+{
+    Console.WriteLine($"Insufficient disk space on {spaceCheck.TargetDrive}!");
+    Console.WriteLine($"Required: {spaceCheck.RequiredBytes / 1024.0 / 1024 / 1024:F2} GB");
+    Console.WriteLine($"Available: {spaceCheck.AvailableBytes / 1024.0 / 1024 / 1024:F2} GB");
+    return;
+}
+
+// Proceed with download
+await client.DownloadAppAsync(options);
 ```
 
 ### Download Options
@@ -374,7 +501,6 @@ public class MyUserInterface : IUserInterface
     public void WriteError(string format, params object[] args) => Console.Error.WriteLine(format, args);
     public ConsoleKeyInfo ReadKey(bool intercept) => Console.ReadKey(intercept);
     public void UpdateProgress(ulong downloaded, ulong total) { }
-    public void UpdateProgress(Ansi.ProgressState state, byte progress = 0) { }
 }
 
 // Use custom interface
@@ -436,11 +562,27 @@ client.EnableDebugLogging();
 | `Login(username, password, rememberPassword, skipAppConfirmation)` | Authenticate with credentials |
 | `LoginAnonymous(skipAppConfirmation)` | Anonymous authentication |
 | `LoginWithQrCode(rememberPassword, skipAppConfirmation)` | QR code authentication |
+| `GetAppInfoAsync(appId)` | Get app name and type |
+| `GetDepotsAsync(appId)` | List all depots for an app |
+| `GetBranchesAsync(appId)` | List all branches for an app |
+| `GetDownloadPlanAsync(options)` | Get download plan without downloading |
+| `CheckDiskSpaceAsync(options)` | Check if sufficient disk space is available |
+| `GetRequiredDiskSpaceAsync(options)` | Get required download size in bytes |
 | `DownloadAppAsync(DepotDownloadOptions)` | Download app content |
 | `DownloadPublishedFileAsync(appId, publishedFileId)` | Download workshop item |
 | `DownloadUgcAsync(appId, ugcId)` | Download UGC content |
 | `EnableDebugLogging()` | Enable verbose logging |
 | `Dispose()` | Clean up resources |
+
+### Query Result Types
+
+| Type | Description |
+|------|-------------|
+| `AppInfo` | App ID, name, and type |
+| `DepotInfo` | Depot ID, name, OS, architecture, language, size |
+| `BranchInfo` | Branch name, build ID, update time, password protection |
+| `DownloadPlan` | List of depots with files and total size |
+| `DiskSpaceCheckResult` | Required/available space and sufficiency check |
 
 ### DepotDownloadOptions
 
@@ -515,6 +657,22 @@ options.MaxDownloads = 16;
 ```powershell
 # CLI - auto-detects and increases parallelism
 ./DepotDownloader -app 730 -use-lancache
+```
+
+### How do I check if I have enough disk space?
+
+```powershell
+# CLI - use dry-run to see total size
+./DepotDownloader -app 730 -dry-run
+```
+
+```csharp
+// Library - use CheckDiskSpaceAsync
+var result = await client.CheckDiskSpaceAsync(options);
+if (!result.HasSufficientSpace)
+{
+    Console.WriteLine($"Need {result.RequiredBytes} bytes, only {result.AvailableBytes} available");
+}
 ```
 
 ---

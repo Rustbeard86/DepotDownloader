@@ -80,3 +80,16 @@ public record DepotDownloadPlan(
     ulong ManifestId,
     IReadOnlyList<FileDownloadInfo> Files,
     ulong TotalSize);
+
+/// <summary>
+///     Result of a disk space check operation.
+/// </summary>
+/// <param name="HasSufficientSpace">Whether there is enough space for the download.</param>
+/// <param name="RequiredBytes">The number of bytes required for the download.</param>
+/// <param name="AvailableBytes">The number of bytes available on the target drive.</param>
+/// <param name="TargetDrive">The drive letter or mount point being checked.</param>
+public record DiskSpaceCheckResult(
+    bool HasSufficientSpace,
+    ulong RequiredBytes,
+    ulong AvailableBytes,
+    string TargetDrive);
