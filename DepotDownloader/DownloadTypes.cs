@@ -43,8 +43,8 @@ internal sealed class DepotFilesData
 /// </summary>
 internal sealed class FileStreamData : IDisposable
 {
+    public readonly SemaphoreSlim FileLock = new(1);
     public int ChunksToDownload;
-    public SemaphoreSlim FileLock = new(1);
     public FileStream FileStream;
 
     public void Dispose()
@@ -59,9 +59,24 @@ internal sealed class FileStreamData : IDisposable
 /// </summary>
 internal sealed class GlobalDownloadCounter
 {
+    /// <summary>
+    ///     Remaining bytes to download (decremented as files are validated/skipped).
+    /// </summary>
     public ulong CompleteDownloadSize;
+
     public ulong TotalBytesCompressed;
+
+    /// <summary>
+    ///     Total bytes downloaded so far across all depots.
+    /// </summary>
+    public ulong TotalBytesDownloaded;
+
     public ulong TotalBytesUncompressed;
+
+    /// <summary>
+    ///     Total size of all files to download (set once before downloading begins).
+    /// </summary>
+    public ulong TotalDownloadSize;
 }
 
 /// <summary>

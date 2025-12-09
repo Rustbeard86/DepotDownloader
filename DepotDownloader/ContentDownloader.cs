@@ -447,6 +447,9 @@ public static class ContentDownloader
             cts.Token.ThrowIfCancellationRequested();
         }
 
+        // Store the total size before it gets decremented during file processing
+        downloadCounter.TotalDownloadSize = downloadCounter.CompleteDownloadSize;
+
         if (!string.IsNullOrWhiteSpace(Config.InstallDirectory) && depotsToDownload.Count > 0)
         {
             var claimedFileNames = new HashSet<string>();
@@ -462,7 +465,7 @@ public static class ContentDownloader
             await DepotFileDownloader.DownloadDepotFilesAsync(cts, downloadCounter, depotFileData,
                 allFileNamesAllDepots, _cdnPool, _steam3, Config, _userInterface);
 
-        _userInterface?.UpdateProgress(1, 1);
+        _userInterface?.UpdateProgress(downloadCounter.TotalDownloadSize, downloadCounter.TotalDownloadSize);
 
         _userInterface?.WriteLine("Total downloaded: {0} bytes ({1} bytes uncompressed) from {2} depots",
             downloadCounter.TotalBytesCompressed, downloadCounter.TotalBytesUncompressed, depots.Count);

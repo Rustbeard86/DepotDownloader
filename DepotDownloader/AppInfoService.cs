@@ -92,7 +92,7 @@ internal static class AppInfoService
         var depots = GetAppSection(steam3, appId, EAppInfoSection.Depots);
         var depotChild = depots?[depotId.ToString()];
 
-        if (depotChild == KeyValue.Invalid || depotChild?["depotfromapp"] == KeyValue.Invalid)
+        if (depotChild is null || depotChild == KeyValue.Invalid || depotChild["depotfromapp"] == KeyValue.Invalid)
             return ContentDownloader.InvalidAppId;
 
         return depotChild["depotfromapp"].AsUnsignedInteger();

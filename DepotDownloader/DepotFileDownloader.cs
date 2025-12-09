@@ -434,6 +434,7 @@ internal static class DepotFileDownloader
         }
 
         ulong sizeDownloaded;
+        ulong totalBytesDownloaded;
         lock (depotDownloadCounter)
         {
             sizeDownloaded = depotDownloadCounter.SizeDownloaded + (ulong)written;
@@ -446,7 +447,11 @@ internal static class DepotFileDownloader
         {
             downloadCounter.TotalBytesCompressed += chunk.CompressedLength;
             downloadCounter.TotalBytesUncompressed += chunk.UncompressedLength;
+            totalBytesDownloaded = downloadCounter.TotalBytesDownloaded += chunk.UncompressedLength;
         }
+
+        // Update global progress
+        userInterface?.UpdateProgress(totalBytesDownloaded, downloadCounter.TotalDownloadSize);
 
         if (remainingChunks == 0)
         {
