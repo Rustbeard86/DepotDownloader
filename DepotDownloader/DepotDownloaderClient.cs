@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
@@ -80,11 +80,11 @@ public sealed class DepotDownloaderClient : IDisposable
 
         // Check for saved login token
         string loginToken = null;
-        if (username != null && rememberPassword)
+        if (username is not null && rememberPassword)
             AccountSettingsStore.Instance.LoginTokens.TryGetValue(username, out loginToken);
 
         // Prompt for password if needed
-        if (username != null && password == null && loginToken == null &&
+        if (username is not null && password is null && loginToken is null &&
             !AccountSettingsStore.Instance.LoginTokens.ContainsKey(username))
         {
             _userInterface.Write("Enter account password for \"{0}\": ", username);

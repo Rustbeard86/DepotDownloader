@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -55,7 +55,7 @@ internal class Program
         var skipAppConfirmation = HasParameter(args, "-no-mobile");
 
         // Validate authentication parameter combinations
-        if (username == null)
+        if (username is null)
         {
             if (rememberPassword && !useQrCode)
             {
@@ -89,7 +89,7 @@ internal class Program
         bool loginSuccess;
         if (useQrCode)
             loginSuccess = client.LoginWithQrCode(rememberPassword, skipAppConfirmation);
-        else if (username != null)
+        else if (username is not null)
             loginSuccess = client.Login(username, password, rememberPassword, skipAppConfirmation);
         else
             loginSuccess = client.LoginAnonymous(skipAppConfirmation);
@@ -163,7 +163,7 @@ internal class Program
 
         // File list
         var fileList = GetParameter<string>(args, "-filelist");
-        if (fileList != null)
+        if (fileList is not null)
         {
             const string regexPrefix = "regex:";
 

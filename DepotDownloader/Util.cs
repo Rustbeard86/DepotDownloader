@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -98,7 +98,7 @@ public static class Util
 
             var currentChecksum = FileShaHash(filename);
 
-            if (expectedChecksum != null && expectedChecksum.SequenceEqual(currentChecksum))
+            if (expectedChecksum is not null && expectedChecksum.SequenceEqual(currentChecksum))
                 return DepotManifest.LoadFromFile(filename);
 
             if (badHashWarning)
@@ -124,7 +124,8 @@ public static class Util
 
             var oldManifest = ProtoManifest.LoadFromFile(filename, out var currentChecksum);
 
-            if (oldManifest != null && (expectedChecksum == null || !expectedChecksum.SequenceEqual(currentChecksum)))
+            if (oldManifest is not null &&
+                (expectedChecksum is null || !expectedChecksum.SequenceEqual(currentChecksum)))
             {
                 oldManifest = null;
 
@@ -132,7 +133,7 @@ public static class Util
                     _userInterface?.WriteLine("Manifest {0} on disk did not match the expected checksum.", manifestId);
             }
 
-            if (oldManifest != null) return oldManifest.ConvertToSteamManifest(depotId);
+            if (oldManifest is not null) return oldManifest.ConvertToSteamManifest(depotId);
         }
 
         return null;

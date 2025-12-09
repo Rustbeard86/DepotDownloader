@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -93,7 +93,7 @@ internal class CdnClientPool(Steam3Session steamSession, uint appId)
     public void ReturnConnection(Server server)
 #pragma warning restore CA1822
     {
-        if (server == null || string.IsNullOrEmpty(server.Host)) return;
+        if (server is null || string.IsNullOrEmpty(server.Host)) return;
 
         // Successful connection - reduce penalty to reward reliable servers
         AccountSettingsStore.Instance.ContentServerPenalty.AddOrUpdate(
@@ -105,7 +105,7 @@ internal class CdnClientPool(Steam3Session steamSession, uint appId)
 
     public void ReturnBrokenConnection(Server server)
     {
-        if (server == null || string.IsNullOrEmpty(server.Host)) return;
+        if (server is null || string.IsNullOrEmpty(server.Host)) return;
 
         lock (_serverLock)
         {

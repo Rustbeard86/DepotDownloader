@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -85,7 +85,7 @@ internal class ProtoManifest
             var newFile = new DepotManifest.FileData(file.FileName, fileNameHash, file.Flags, file.TotalSize,
                 file.FileHash, null!, false, chunkCount);
 
-            if (file.Chunks != null)
+            if (file.Chunks is not null)
                 foreach (var chunk in file.Chunks)
                 {
                     var newChunk = new DepotManifest.ChunkData(chunk.ChunkId, BitConverter.ToUInt32(chunk.Checksum, 0),

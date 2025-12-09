@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Frozen;
@@ -114,7 +114,7 @@ public static class ContentDownloader
 
     private static async Task<bool> AccountHasAccess(uint appId, uint depotId)
     {
-        if (_steam3 == null || _steam3.SteamUser.SteamID == null)
+        if (_steam3 is null || _steam3.SteamUser.SteamID is null)
             return false;
 
         List<uint> licenseQuery;
@@ -124,7 +124,7 @@ public static class ContentDownloader
         }
         else
         {
-            if (_steam3.Licenses == null)
+            if (_steam3.Licenses is null)
                 return false;
 
             // Materialize to list to avoid multiple enumeration
@@ -134,7 +134,7 @@ public static class ContentDownloader
         await _steam3.RequestPackageInfo(licenseQuery);
 
         foreach (var license in licenseQuery)
-            if (_steam3.PackageInfo.TryGetValue(license, out var package) && package != null)
+            if (_steam3.PackageInfo.TryGetValue(license, out var package) && package is not null)
             {
                 if (package.KeyValues["appids"].Children.Any(child => child.AsUnsignedInteger() == depotId))
                     return true;
@@ -145,14 +145,14 @@ public static class ContentDownloader
 
         // Check if this app is free to download without a license
         var info = GetSteam3AppSection(appId, EAppInfoSection.Common);
-        return info != null && info["FreeToDownload"].AsBoolean();
+        return info is not null && info["FreeToDownload"].AsBoolean();
     }
 
     private static KeyValue GetSteam3AppSection(uint appId, EAppInfoSection section)
     {
-        if (_steam3?.AppInfo == null) return null;
+        if (_steam3?.AppInfo is null) return null;
 
-        if (!_steam3.AppInfo.TryGetValue(appId, out var app) || app == null) return null;
+        if (!_steam3.AppInfo.TryGetValue(appId, out var app) || app is null) return null;
 
         var appinfo = app.KeyValues;
         var sectionKey = section switch
@@ -173,7 +173,7 @@ public static class ContentDownloader
             return 0;
 
         var depots = GetSteam3AppSection(appId, EAppInfoSection.Depots);
-        if (depots == null)
+        if (depots is null)
             return 0;
 
         var branches = depots["branches"];
@@ -205,7 +205,7 @@ public static class ContentDownloader
     private static async Task<ulong> GetSteam3DepotManifest(uint depotId, uint appId, string branch)
     {
         var depots = GetSteam3AppSection(appId, EAppInfoSection.Depots);
-        if (depots == null)
+        if (depots is null)
             return InvalidManifestId;
 
         var depotChild = depots[depotId.ToString()];
@@ -297,21 +297,21 @@ public static class ContentDownloader
     private static string GetAppName(uint appId)
     {
         var info = GetSteam3AppSection(appId, EAppInfoSection.Common);
-        return info == null ? string.Empty : info["name"].AsString();
+        return info is null ? string.Empty : info["name"].AsString();
     }
 
     public static bool InitializeSteam3(string username, string password)
     {
         string loginToken = null;
 
-        if (username != null && Config.RememberPassword)
+        if (username is not null && Config.RememberPassword)
             _ = AccountSettingsStore.Instance.LoginTokens.TryGetValue(username, out loginToken);
 
         _steam3 = new Steam3Session(
             new SteamUser.LogOnDetails
             {
                 Username = username,
-                Password = loginToken == null ? password : null,
+                Password = loginToken is null ? password : null,
                 ShouldRememberPassword = Config.RememberPassword,
                 AccessToken = loginToken,
                 LoginID = Config.LoginId ?? 0x534B32 // "SK2"
@@ -385,7 +385,7 @@ public static class ContentDownloader
 
         if (_steam3?.SteamUser?.SteamID?.AccountType != EAccountType.AnonUser)
         {
-            if (_steam3 != null) details = await _steam3.GetUgcDetails(ugcId);
+            if (_steam3 is not null) details = await _steam3.GetUgcDetails(ugcId);
         }
         else
         {
@@ -434,7 +434,7 @@ public static class ContentDownloader
     public static async Task DownloadAppAsync(uint appId, List<(uint depotId, ulong manifestId)> depotManifestIds,
         string branch, string os, string arch, string language, bool lv, bool isUgc)
     {
-        if (_steam3 == null) throw new InvalidOperationException("Steam3 must be initialized before downloading.");
+        if (_steam3 is null) throw new InvalidOperationException("Steam3 must be initialized before downloading.");
 
         _cdnPool = new CdnClientPool(_steam3, appId);
 
@@ -472,7 +472,7 @@ public static class ContentDownloader
 
         if (isUgc)
         {
-            if (depots != null)
+            if (depots is not null)
             {
                 var workshopDepot = depots["workshopdepot"].AsUnsignedInteger();
                 if (workshopDepot != 0 && !depotIdsExpected.Contains(workshopDepot))
@@ -488,7 +488,7 @@ public static class ContentDownloader
         {
             _userInterface?.WriteLine("Using app branch: '{0}'.", branch);
 
-            if (depots != null)
+            if (depots is not null)
                 foreach (var depotSection in depots.Children)
                 {
                     if (depotSection.Children.Count == 0)
@@ -565,7 +565,7 @@ public static class ContentDownloader
         foreach (var (depotId, manifestId) in depotManifestIds)
         {
             var info = await GetDepotInfo(depotId, appId, manifestId, branch);
-            if (info != null) infos.Add(info);
+            if (info is not null) infos.Add(info);
         }
 
         _userInterface?.WriteLine();
@@ -583,7 +583,7 @@ public static class ContentDownloader
 
     private static async Task<DepotDownloadInfo> GetDepotInfo(uint depotId, uint appId, ulong manifestId, string branch)
     {
-        if (_steam3 == null)
+        if (_steam3 is null)
             throw new InvalidOperationException("Steam3 must be initialized before getting depot info.");
 
         if (appId != InvalidAppId) await _steam3.RequestAppInfo(appId);
@@ -636,7 +636,7 @@ public static class ContentDownloader
         if (proxyAppId != InvalidAppId)
         {
             var common = GetSteam3AppSection(appId, EAppInfoSection.Common);
-            if (common == null || !common["FreeToDownload"].AsBoolean()) containingAppId = proxyAppId;
+            if (common is null || !common["FreeToDownload"].AsBoolean()) containingAppId = proxyAppId;
         }
 
         return new DepotDownloadInfo(depotId, containingAppId, manifestId, branch, installDir, depotKey);
@@ -658,7 +658,7 @@ public static class ContentDownloader
         {
             var depotFileData = await ProcessDepotManifestAndFiles(cts, depot, downloadCounter);
 
-            if (depotFileData != null)
+            if (depotFileData is not null)
             {
                 depotsToDownload.Add(depotFileData);
                 allFileNamesAllDepots.UnionWith(depotFileData.AllFileNames);
@@ -715,7 +715,7 @@ public static class ContentDownloader
             oldManifest = Util.LoadManifestFromFile(configDir, depot.DepotId, lastManifestId, badHashWarning);
         }
 
-        if (lastManifestId == depot.ManifestId && oldManifest != null)
+        if (lastManifestId == depot.ManifestId && oldManifest is not null)
         {
             newManifest = oldManifest;
             _userInterface?.WriteLine("Already have manifest {0} for depot {1}.", depot.ManifestId, depot.DepotId);
@@ -724,7 +724,7 @@ public static class ContentDownloader
         {
             newManifest = Util.LoadManifestFromFile(configDir, depot.DepotId, depot.ManifestId, true);
 
-            if (newManifest != null)
+            if (newManifest is not null)
             {
                 _userInterface?.WriteLine("Already have manifest {0} for depot {1}.", depot.ManifestId, depot.DepotId);
             }
@@ -775,7 +775,7 @@ public static class ContentDownloader
                             "Downloading manifest {0} from {1} with {2}",
                             depot.ManifestId,
                             connection,
-                            _cdnPool.ProxyServer != null ? _cdnPool.ProxyServer : "no proxy");
+                            _cdnPool.ProxyServer is not null ? _cdnPool.ProxyServer : "no proxy");
                         newManifest = await _cdnPool.CdnClient.DownloadManifestAsync(
                             depot.DepotId,
                             depot.ManifestId,
@@ -796,7 +796,7 @@ public static class ContentDownloader
                     {
                         // If the CDN returned 403, attempt to get a cdn auth if we didn't yet
                         if (e.StatusCode == HttpStatusCode.Forbidden &&
-                            connection != null &&
+                            connection is not null &&
                             !_steam3.CdnAuthTokens.ContainsKey((depot.DepotId, connection.Host)))
                         {
                             await _steam3.RequestCdnAuthToken(depot.AppId, depot.DepotId, connection);
@@ -838,9 +838,9 @@ public static class ContentDownloader
                         _userInterface?.WriteLine("Encountered error downloading manifest for depot {0} {1}: {2}",
                             depot.DepotId, depot.ManifestId, e.Message);
                     }
-                } while (newManifest == null);
+                } while (newManifest is null);
 
-                if (newManifest == null)
+                if (newManifest is null)
                 {
                     _userInterface?.WriteLine("\nUnable to download manifest {0} for depot {1}", depot.ManifestId,
                         depot.DepotId);
@@ -987,7 +987,7 @@ public static class ContentDownloader
         var depotDownloadCounter = depotFilesData.DepotCounter;
         var oldProtoManifest = depotFilesData.PreviousManifest;
         DepotManifest.FileData oldManifestFile = null;
-        if (oldProtoManifest?.Files != null)
+        if (oldProtoManifest?.Files is not null)
             oldManifestFile = oldProtoManifest.Files.SingleOrDefault(f => f.FileName == file.FileName);
 
         var fileFinalPath = Path.Combine(depot.InstallDir, file.FileName);
@@ -1019,7 +1019,7 @@ public static class ContentDownloader
         else
         {
             // open existing
-            if (oldManifestFile != null)
+            if (oldManifestFile is not null)
             {
                 neededChunks = [];
 
@@ -1035,8 +1035,9 @@ public static class ContentDownloader
                     {
                         var oldChunk =
                             oldManifestFile.Chunks.FirstOrDefault(c =>
-                                chunk.ChunkID != null && c.ChunkID != null && c.ChunkID.SequenceEqual(chunk.ChunkID));
-                        if (oldChunk != null)
+                                chunk.ChunkID is not null && c.ChunkID is not null &&
+                                c.ChunkID.SequenceEqual(chunk.ChunkID));
+                        if (oldChunk is not null)
                             matchingChunks.Add(new ChunkMatch(oldChunk, chunk));
                         else
                             neededChunks.Add(chunk);
@@ -1146,11 +1147,11 @@ public static class ContentDownloader
         var fileIsExecutable = file.Flags.HasFlag(EDepotFileFlag.Executable);
         switch (fileIsExecutable)
         {
-            case true when !fileDidExist || oldManifestFile == null ||
+            case true when !fileDidExist || oldManifestFile is null ||
                            !oldManifestFile.Flags.HasFlag(EDepotFileFlag.Executable):
                 PlatformUtilities.SetExecutable(fileFinalPath, true);
                 break;
-            case false when oldManifestFile != null &&
+            case false when oldManifestFile is not null &&
                             oldManifestFile.Flags.HasFlag(EDepotFileFlag.Executable):
                 PlatformUtilities.SetExecutable(fileFinalPath, false);
                 break;
@@ -1179,7 +1180,7 @@ public static class ContentDownloader
         var depot = depotFilesData.DepotDownloadInfo;
         var depotDownloadCounter = depotFilesData.DepotCounter;
 
-        if (chunk.ChunkID != null)
+        if (chunk.ChunkID is not null)
         {
             var chunkId = Convert.ToHexString(chunk.ChunkID).ToLowerInvariant();
 
@@ -1207,7 +1208,7 @@ public static class ContentDownloader
                         }
 
                         DebugLog.WriteLine("ContentDownloader", "Downloading chunk {0} from {1} with {2}", chunkId,
-                            connection, _cdnPool.ProxyServer != null ? _cdnPool.ProxyServer : "no proxy");
+                            connection, _cdnPool.ProxyServer is not null ? _cdnPool.ProxyServer : "no proxy");
                         written = await _cdnPool.CdnClient.DownloadDepotChunkAsync(
                             depot.DepotId,
                             chunk,
@@ -1231,7 +1232,7 @@ public static class ContentDownloader
                         // If the CDN returned 403, attempt to get a cdn auth if we didn't yet,
                         // if auth task already exists, make sure it didn't complete yet, so that it gets awaited above
                         if (e.StatusCode == HttpStatusCode.Forbidden &&
-                            connection != null &&
+                            connection is not null &&
                             (!_steam3.CdnAuthTokens.TryGetValue((depot.DepotId, connection.Host),
                                 out var authTokenCallbackPromise) || !authTokenCallbackPromise.Task.IsCompleted))
                         {
@@ -1281,7 +1282,7 @@ public static class ContentDownloader
                 {
                     await fileStreamData.FileLock.WaitAsync().ConfigureAwait(false);
 
-                    if (fileStreamData.FileStream == null)
+                    if (fileStreamData.FileStream is null)
                     {
                         var fileFinalPath = Path.Combine(depot.InstallDir, file.FileName);
                         fileStreamData.FileStream = File.Open(fileFinalPath, FileMode.Open);
@@ -1344,7 +1345,7 @@ public static class ContentDownloader
 
         var uniqueChunks = new HashSet<byte[]>(new ChunkIdComparer());
 
-        if (manifest.Files == null) return;
+        if (manifest.Files is null) return;
         foreach (var file in manifest.Files)
         foreach (var chunk in file.Chunks)
             uniqueChunks.Add(chunk.ChunkID);
@@ -1425,7 +1426,7 @@ public static class ContentDownloader
         public bool Equals(byte[] x, byte[] y)
         {
             if (ReferenceEquals(x, y)) return true;
-            if (x == null || y == null) return false;
+            if (x is null || y is null) return false;
             return x.SequenceEqual(y);
         }
 

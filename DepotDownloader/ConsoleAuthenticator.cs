@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using SteamKit2.Authentication;
 
@@ -24,7 +24,7 @@ internal class ConsoleAuthenticator(IUserInterface userInterface) : IAuthenticat
                 "STEAM GUARD! Please enter your 2-factor auth code from your authenticator app: ");
             code = _userInterface.ReadLine()?.Trim();
 
-            if (code == null) break;
+            if (code is null) break;
         } while (string.IsNullOrEmpty(code));
 
         return Task.FromResult(code!);
@@ -43,7 +43,7 @@ internal class ConsoleAuthenticator(IUserInterface userInterface) : IAuthenticat
             _userInterface.WriteError($"STEAM GUARD! Please enter the auth code sent to the email at {email}: ");
             code = _userInterface.ReadLine()?.Trim();
 
-            if (code == null) break;
+            if (code is null) break;
         } while (string.IsNullOrEmpty(code));
 
         return Task.FromResult(code!);

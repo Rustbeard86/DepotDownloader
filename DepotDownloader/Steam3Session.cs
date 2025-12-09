@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -50,7 +50,7 @@ internal class Steam3Session
     {
         _userInterface = userInterface ?? throw new ArgumentNullException(nameof(userInterface));
         _logonDetails = details;
-        _authenticatedUser = details.Username != null || ContentDownloader.Config.UseQrCode;
+        _authenticatedUser = details.Username is not null || ContentDownloader.Config.UseQrCode;
 
         var clientConfiguration = SteamConfiguration.Create(config =>
             config
@@ -64,7 +64,7 @@ internal class Steam3Session
         _steamCloud = SteamClient.GetHandler<SteamCloud>();
         var steamUnifiedMessages = SteamClient.GetHandler<SteamUnifiedMessages>();
 
-        if (steamUnifiedMessages != null)
+        if (steamUnifiedMessages is not null)
             _steamPublishedFile = steamUnifiedMessages.CreateService<PublishedFile>();
         else
             throw new InvalidOperationException("Failed to get SteamUnifiedMessages handler from SteamClient");
@@ -161,7 +161,7 @@ internal class Steam3Session
 
         var appInfoMultiple = await _steamApps.PICSGetProductInfo([request], []);
 
-        if (appInfoMultiple.Results != null)
+        if (appInfoMultiple.Results is not null)
             foreach (var appInfo in appInfoMultiple.Results)
             {
                 foreach (var appValue in appInfo.Apps)
@@ -197,7 +197,7 @@ internal class Steam3Session
 
         var packageInfoMultiple = await _steamApps.PICSGetProductInfo([], packageRequests);
 
-        if (packageInfoMultiple.Results != null)
+        if (packageInfoMultiple.Results is not null)
             foreach (var packageInfo in packageInfoMultiple.Results)
             {
                 foreach (var packageValue in packageInfo.Packages)
@@ -274,7 +274,7 @@ internal class Steam3Session
 
         DebugLog.WriteLine(nameof(Steam3Session), $"Requesting CDN auth token for {server.Host}");
 
-        if (server.Host != null)
+        if (server.Host is not null)
         {
             var cdnAuth = await SteamContent.GetCDNAuthToken(appid, depotid, server.Host);
 
@@ -410,12 +410,12 @@ internal class Steam3Session
             }
             else
             {
-                if (_logonDetails.Username != null)
+                if (_logonDetails.Username is not null)
                     _userInterface.WriteLine("Logging '{0}' into Steam3...", _logonDetails.Username);
 
                 if (_authSession is null)
                 {
-                    if (_logonDetails.Username != null && _logonDetails.Password != null &&
+                    if (_logonDetails.Username is not null && _logonDetails.Password is not null &&
                         _logonDetails.AccessToken is null)
                     {
                         try
@@ -484,7 +484,7 @@ internal class Steam3Session
                     }
                 }
 
-                if (_authSession != null)
+                if (_authSession is not null)
                 {
                     try
                     {
@@ -493,7 +493,7 @@ internal class Steam3Session
                         _logonDetails.Password = null;
                         _logonDetails.AccessToken = result.RefreshToken;
 
-                        if (result.NewGuardData != null)
+                        if (result.NewGuardData is not null)
                         {
                             AccountSettingsStore.Instance.GuardData[result.AccountName] = result.NewGuardData;
 
@@ -574,7 +574,7 @@ internal class Steam3Session
     {
         var isSteamGuard = loggedOn.Result == EResult.AccountLogonDenied;
         var is2Fa = loggedOn.Result == EResult.AccountLoginDeniedNeedTwoFactor;
-        var isAccessToken = ContentDownloader.Config.RememberPassword && _logonDetails.AccessToken != null &&
+        var isAccessToken = ContentDownloader.Config.RememberPassword && _logonDetails.AccessToken is not null &&
                             loggedOn.Result is EResult.InvalidPassword
                                 or EResult.InvalidSignature
                                 or EResult.AccessDenied
@@ -598,7 +598,7 @@ internal class Steam3Session
             }
             else if (isAccessToken)
             {
-                if (_logonDetails.Username != null)
+                if (_logonDetails.Username is not null)
                 {
                     // Clear the invalid token from stored settings
                     AccountSettingsStore.Instance.LoginTokens.Remove(_logonDetails.Username);

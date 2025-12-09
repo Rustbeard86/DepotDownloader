@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -33,7 +33,7 @@ public class DepotConfigStore
         {
             lock (LockObject)
             {
-                if (_instance == null)
+                if (_instance is null)
                     throw new InvalidOperationException(
                         "DepotConfigStore has not been loaded. Call LoadFromFile first.");
                 return _instance;
@@ -47,7 +47,7 @@ public class DepotConfigStore
         {
             lock (LockObject)
             {
-                return _instance != null;
+                return _instance is not null;
             }
         }
     }
@@ -61,7 +61,7 @@ public class DepotConfigStore
     {
         lock (LockObject)
         {
-            if (_instance != null)
+            if (_instance is not null)
                 throw new InvalidOperationException("Config already loaded");
 
             if (File.Exists(filename))
@@ -71,7 +71,7 @@ public class DepotConfigStore
                     using var ds = new DeflateStream(fs, CompressionMode.Decompress);
                     _instance = Serializer.Deserialize<DepotConfigStore>(ds);
 
-                    if (_instance == null)
+                    if (_instance is null)
                     {
                         _userInterface?.WriteLine("Failed to load depot config: deserialization returned null");
                         _instance = new DepotConfigStore();
@@ -95,7 +95,7 @@ public class DepotConfigStore
 
         lock (LockObject)
         {
-            if (_instance == null)
+            if (_instance is null)
                 throw new InvalidOperationException("Cannot save config before loading");
 
             instance = _instance;

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace DepotDownloader.Lib;
 
@@ -28,7 +28,7 @@ public static class Ansi
 
     public static void Init()
     {
-        if (_userInterface == null)
+        if (_userInterface is null)
             throw new InvalidOperationException("Ansi must be initialized with IUserInterface before calling Init()");
 
         if (_userInterface.IsInputRedirected || _userInterface.IsOutputRedirected) return;

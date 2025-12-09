@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -46,7 +46,7 @@ public class AccountSettingsStore
         {
             lock (LockObject)
             {
-                if (_instance == null)
+                if (_instance is null)
                     throw new InvalidOperationException(
                         "AccountSettingsStore has not been loaded. Call LoadFromFile first.");
                 return _instance;
@@ -60,7 +60,7 @@ public class AccountSettingsStore
         {
             lock (LockObject)
             {
-                return _instance != null;
+                return _instance is not null;
             }
         }
     }
@@ -74,7 +74,7 @@ public class AccountSettingsStore
     {
         lock (LockObject)
         {
-            if (_instance != null)
+            if (_instance is not null)
                 throw new InvalidOperationException("Config already loaded");
 
             if (IsolatedStorage.FileExists(filename))
@@ -102,7 +102,7 @@ public class AccountSettingsStore
 
         lock (LockObject)
         {
-            if (_instance == null)
+            if (_instance is null)
                 throw new InvalidOperationException("Cannot save config before loading");
 
             instance = _instance;
