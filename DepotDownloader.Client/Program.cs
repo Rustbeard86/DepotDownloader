@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using DepotDownloader.Lib;
@@ -14,6 +15,7 @@ namespace DepotDownloader.Client;
 internal class Program
 {
     private static bool[] _consumedArgs;
+    private static ConfigFile _config;
     private static ConsoleUserInterface _userInterface;
 
     private static async Task<int> Main(string[] args)
@@ -35,22 +37,38 @@ internal class Program
 
         _consumedArgs = new bool[args.Length];
 
+        // Load config file if specified (do this early so CLI args can override)
+        var configPath = GetParameter<string>(args, "-config") ?? GetParameter<string>(args, "--config");
+        if (configPath is not null)
+            try
+            {
+                var configJson = await File.ReadAllTextAsync(configPath);
+                _config = JsonSerializer.Deserialize(configJson, ConfigFileContext.Default.ConfigFile);
+                _userInterface.WriteLine("Loaded config from: {0}", configPath);
+            }
+            catch (Exception ex)
+            {
+                _userInterface.WriteError("Error loading config file: {0}", ex.Message);
+                return 1;
+            }
+
         // Create the library client - this handles all initialization
         using var client = new DepotDownloaderClient(_userInterface);
 
-        // Enable debug logging if requested
-        if (HasParameter(args, "-debug"))
+        // Enable debug logging if requested (CLI takes precedence over config)
+        if (HasParameter(args, "-debug") || (_config?.Debug ?? false))
         {
             PrintVersion(true);
             client.EnableDebugLogging();
         }
 
-        // Parse authentication parameters
-        var username = GetParameter<string>(args, "-username") ?? GetParameter<string>(args, "-user");
+        // Parse authentication parameters (CLI takes precedence over config)
+        var username = GetParameter<string>(args, "-username") ??
+                       GetParameter<string>(args, "-user") ?? _config?.Username;
         var password = GetParameter<string>(args, "-password") ?? GetParameter<string>(args, "-pass");
-        var rememberPassword = HasParameter(args, "-remember-password");
-        var useQrCode = HasParameter(args, "-qr");
-        var skipAppConfirmation = HasParameter(args, "-no-mobile");
+        var rememberPassword = HasParameter(args, "-remember-password") || (_config?.RememberPassword ?? false);
+        var useQrCode = HasParameter(args, "-qr") || (_config?.UseQrCode ?? false);
+        var skipAppConfirmation = HasParameter(args, "-no-mobile") || (_config?.NoMobile ?? false);
 
         // Validate authentication parameter combinations
         if (username is null)
@@ -67,8 +85,8 @@ internal class Program
             return 1;
         }
 
-        // Parse download options
-        var appId = GetParameter(args, "-app", SteamConstants.InvalidAppId);
+        // Parse download options (CLI takes precedence over config)
+        var appId = GetParameter(args, "-app", _config?.AppId ?? SteamConstants.InvalidAppId);
         if (appId == SteamConstants.InvalidAppId)
         {
             _userInterface.WriteLine("Error: -app not specified!");
@@ -506,25 +524,33 @@ internal class Program
 
     private static async Task<DepotDownloadOptions> BuildDownloadOptionsAsync(string[] args, uint appId)
     {
+        // Helper to get CLI param or fall back to config value
+        var useLancache = HasParameter(args, "-use-lancache") || (_config?.UseLancache ?? false);
+
         var options = new DepotDownloadOptions
         {
             AppId = appId,
-            DownloadManifestOnly = HasParameter(args, "-manifest-only"),
-            InstallDirectory = GetParameter<string>(args, "-dir"),
+            DownloadManifestOnly = HasParameter(args, "-manifest-only") || (_config?.ManifestOnly ?? false),
+            InstallDirectory = GetParameter<string>(args, "-dir") ?? _config?.InstallDirectory,
             VerifyAll = HasParameter(args, "-verify-all") ||
                         HasParameter(args, "-verify_all") ||
-                        HasParameter(args, "-validate"),
-            MaxDownloads = GetParameter(args, "-max-downloads", 8),
-            LoginId = HasParameter(args, "-loginid") ? GetParameter<uint>(args, "-loginid") : null,
-            VerifyDiskSpace = !HasParameter(args, "-skip-disk-check") && !HasParameter(args, "--skip-disk-check")
+                        HasParameter(args, "-validate") ||
+                        (_config?.Validate ?? false),
+            MaxDownloads = GetParameter(args, "-max-downloads", _config?.MaxDownloads ?? 8),
+            LoginId = HasParameter(args, "-loginid")
+                ? GetParameter<uint>(args, "-loginid")
+                : _config?.LoginId,
+            VerifyDiskSpace = !HasParameter(args, "-skip-disk-check") &&
+                              !HasParameter(args, "--skip-disk-check") &&
+                              !(_config?.SkipDiskCheck ?? false)
         };
 
-        // Cell ID
-        var cellId = GetParameter(args, "-cellid", -1);
+        // Cell ID (CLI overrides config)
+        var cellId = GetParameter(args, "-cellid", _config?.CellId ?? -1);
         options.CellId = cellId == -1 ? 0 : cellId;
 
         // Lancache detection
-        if (HasParameter(args, "-use-lancache"))
+        if (useLancache)
         {
             await SteamKit2.CDN.Client.DetectLancacheServerAsync();
             if (SteamKit2.CDN.Client.UseLancacheServer)
@@ -532,13 +558,14 @@ internal class Program
                 _userInterface.WriteLine(
                     "Detected Lancache server! Downloads will be directed through the Lancache.");
 
-                // Increase concurrent downloads for lancache
-                if (!HasParameter(args, "-max-downloads")) options.MaxDownloads = 25;
+                // Increase concurrent downloads for lancache if not explicitly set
+                if (!HasParameter(args, "-max-downloads") && _config?.MaxDownloads is null)
+                    options.MaxDownloads = 25;
             }
         }
 
-        // File list
-        var fileList = GetParameter<string>(args, "-filelist");
+        // File list (CLI overrides config)
+        var fileList = GetParameter<string>(args, "-filelist") ?? _config?.FileList;
         if (fileList is not null)
         {
             const string regexPrefix = "regex:";
@@ -574,44 +601,53 @@ internal class Program
             }
         }
 
-        // Branch options
+        // Branch options (CLI overrides config)
         var branch = GetParameter<string>(args, "-branch") ??
                      GetParameter<string>(args, "-beta") ??
+                     _config?.Branch ??
                      SteamConstants.DefaultBranch;
         options.Branch = branch;
         options.BranchPassword = GetParameter<string>(args, "-branchpassword") ??
-                                 GetParameter<string>(args, "-betapassword");
+                                 GetParameter<string>(args, "-betapassword") ??
+                                 _config?.BranchPassword;
 
         if (!string.IsNullOrEmpty(options.BranchPassword) && string.IsNullOrEmpty(branch))
             throw new ArgumentException("Cannot specify -branchpassword when -branch is not specified.");
 
-        // Platform options
-        options.DownloadAllPlatforms = HasParameter(args, "-all-platforms");
-        options.Os = GetParameter<string>(args, "-os");
+        // Platform options (CLI overrides config)
+        options.DownloadAllPlatforms = HasParameter(args, "-all-platforms") || (_config?.AllPlatforms ?? false);
+        options.Os = GetParameter<string>(args, "-os") ?? _config?.Os;
 
         if (options.DownloadAllPlatforms && !string.IsNullOrEmpty(options.Os))
             throw new ArgumentException("Cannot specify -os when -all-platforms is specified.");
 
-        // Architecture options
-        options.DownloadAllArchs = HasParameter(args, "-all-archs");
-        options.Architecture = GetParameter<string>(args, "-osarch");
+        // Architecture options (CLI overrides config)
+        options.DownloadAllArchs = HasParameter(args, "-all-archs") || (_config?.AllArchs ?? false);
+        options.Architecture = GetParameter<string>(args, "-osarch") ?? _config?.OsArch;
 
         if (options.DownloadAllArchs && !string.IsNullOrEmpty(options.Architecture))
             throw new ArgumentException("Cannot specify -osarch when -all-archs is specified.");
 
-        // Language options
-        options.DownloadAllLanguages = HasParameter(args, "-all-languages");
-        options.Language = GetParameter<string>(args, "-language");
+        // Language options (CLI overrides config)
+        options.DownloadAllLanguages = HasParameter(args, "-all-languages") || (_config?.AllLanguages ?? false);
+        options.Language = GetParameter<string>(args, "-language") ?? _config?.Language;
 
         if (options.DownloadAllLanguages && !string.IsNullOrEmpty(options.Language))
             throw new ArgumentException("Cannot specify -language when -all-languages is specified.");
 
-        // Low violence
-        options.LowViolence = HasParameter(args, "-lowviolence");
+        // Low violence (CLI overrides config)
+        options.LowViolence = HasParameter(args, "-lowviolence") || (_config?.LowViolence ?? false);
 
-        // Depot and manifest IDs
+        // Depot and manifest IDs (CLI overrides config)
         var depotIdList = GetParameterList<uint>(args, "-depot");
         var manifestIdList = GetParameterList<ulong>(args, "-manifest");
+
+        // If CLI didn't specify depots, use config
+        if (depotIdList.Count == 0 && _config?.Depots is { Count: > 0 })
+        {
+            depotIdList = _config.Depots;
+            manifestIdList = _config.Manifests ?? [];
+        }
 
         if (manifestIdList.Count > 0)
         {
@@ -726,13 +762,16 @@ internal class Program
         _userInterface.WriteLine(
             "       depotdownloader -app <id> -ugc <id> [-username <username> [-password <password>]]");
         _userInterface.WriteLine();
+        _userInterface.WriteLine("Usage: using a config file:");
+        _userInterface.WriteLine("       depotdownloader -config <config.json> [overrides]");
+        _userInterface.WriteLine();
         _userInterface.WriteLine("Parameters:");
         _userInterface.WriteLine("  -app <#>                 - the AppID to download.");
         _userInterface.WriteLine("  -depot <#>               - the DepotID to download.");
         _userInterface.WriteLine(
             "  -manifest <id>           - manifest id of content to download (requires -depot, default: current for branch).");
         _userInterface.WriteLine(
-            $"  -branch <branchname>    - download from specified branch if available (default: {SteamConstants.DefaultBranch}).");
+            $"  -branch <branchname>     - download from specified branch if available (default: {SteamConstants.DefaultBranch}).");
         _userInterface.WriteLine("  -branchpassword <pass>   - branch password if applicable.");
         _userInterface.WriteLine(
             "  -all-platforms           - downloads all platform-specific depots when -app is used.");
@@ -785,6 +824,9 @@ internal class Program
             "  -use-lancache            - forces downloads over the local network via a Lancache instance.");
         _userInterface.WriteLine(
             "  -skip-disk-check         - skip disk space verification before downloading.");
+        _userInterface.WriteLine();
+        _userInterface.WriteLine("  -config <file.json>      - load settings from a JSON configuration file.");
+        _userInterface.WriteLine("                             CLI arguments override config file settings.");
         _userInterface.WriteLine();
         _userInterface.WriteLine("  -list-depots             - list all depots for the specified app and exit.");
         _userInterface.WriteLine("  -list-branches           - list all branches for the specified app and exit.");
