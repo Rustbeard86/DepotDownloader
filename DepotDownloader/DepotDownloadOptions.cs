@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
@@ -137,4 +138,68 @@ public sealed class DepotDownloadOptions
     ///     Allows GUI applications and services to cancel downloads.
     /// </summary>
     public CancellationToken CancellationToken { get; init; } = CancellationToken.None;
+
+    /// <summary>
+    ///     Validates the options and throws if invalid.
+    /// </summary>
+    /// <exception cref="ArgumentException">When validation fails.</exception>
+    public void Validate()
+    {
+        // Required field validation
+        if (AppId == SteamConstants.InvalidAppId)
+            throw new ArgumentException("AppId must be specified.");
+
+        // Mutually exclusive options validation
+        if (DownloadAllPlatforms && !string.IsNullOrEmpty(Os))
+            throw new ArgumentException("Cannot specify both DownloadAllPlatforms and Os. Choose one.");
+
+        if (DownloadAllArchs && !string.IsNullOrEmpty(Architecture))
+            throw new ArgumentException("Cannot specify both DownloadAllArchs and Architecture. Choose one.");
+
+        if (DownloadAllLanguages && !string.IsNullOrEmpty(Language))
+            throw new ArgumentException("Cannot specify both DownloadAllLanguages and Language. Choose one.");
+
+        // Branch password requires branch
+        if (!string.IsNullOrEmpty(BranchPassword) && string.IsNullOrEmpty(Branch))
+            throw new ArgumentException("BranchPassword requires a Branch to be specified.");
+
+        // Resume requires install directory
+        if (Resume && string.IsNullOrWhiteSpace(InstallDirectory))
+            throw new ArgumentException("Resume requires an InstallDirectory.");
+
+        // Range validation
+        if (MaxDownloads < 1 || MaxDownloads > 64)
+            throw new ArgumentOutOfRangeException(nameof(MaxDownloads), "MaxDownloads must be between 1 and 64.");
+
+        if (MaxBytesPerSecond is < 0)
+            throw new ArgumentOutOfRangeException(nameof(MaxBytesPerSecond), "MaxBytesPerSecond cannot be negative.");
+
+        // OS validation
+        if (!string.IsNullOrEmpty(Os) && Os is not ("windows" or "linux" or "macos"))
+            throw new ArgumentException("Os must be 'windows', 'linux', or 'macos'.", nameof(Os));
+
+        // Architecture validation
+        if (!string.IsNullOrEmpty(Architecture) && Architecture is not ("32" or "64"))
+            throw new ArgumentException("Architecture must be '32' or '64'.", nameof(Architecture));
+    }
+
+    /// <summary>
+    ///     Validates the options and returns whether they are valid.
+    /// </summary>
+    /// <param name="errorMessage">The validation error message, if any.</param>
+    /// <returns>True if valid, false otherwise.</returns>
+    public bool TryValidate(out string errorMessage)
+    {
+        try
+        {
+            Validate();
+            errorMessage = null;
+            return true;
+        }
+        catch (ArgumentException ex)
+        {
+            errorMessage = ex.Message;
+            return false;
+        }
+    }
 }

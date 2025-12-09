@@ -318,6 +318,7 @@ By default, DepotDownloader uses an anonymous account. Many games require authen
 | `-cellid <#>` | Override content server CellID |
 | `-use-lancache` | Route downloads through Lancache |
 | `-skip-disk-check` | Skip disk space verification before downloading |
+| `-resume` | Resume a previously interrupted download |
 
 #### Discovery & Planning
 

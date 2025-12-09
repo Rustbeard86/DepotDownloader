@@ -365,14 +365,48 @@ public sealed class DepotDownloadOptionsBuilder
     }
 
     /// <summary>
-    ///     Builds the <see cref="DepotDownloadOptions" /> instance.
+    ///     Builds the <see cref="DepotDownloadOptions" /> instance with full validation.
     /// </summary>
     /// <returns>A configured <see cref="DepotDownloadOptions" /> instance.</returns>
-    /// <exception cref="System.ArgumentException">When AppId is not specified.</exception>
+    /// <exception cref="ArgumentException">When validation fails.</exception>
     public DepotDownloadOptions Build()
     {
+        // Required field validation
         if (_appId == SteamConstants.InvalidAppId)
             throw new ArgumentException("AppId must be specified. Use ForApp() to set it.");
+
+        // Mutually exclusive options validation
+        if (_downloadAllPlatforms && !string.IsNullOrEmpty(_os))
+            throw new ArgumentException("Cannot specify both ForAllPlatforms() and ForOs(). Choose one.");
+
+        if (_downloadAllArchs && !string.IsNullOrEmpty(_architecture))
+            throw new ArgumentException("Cannot specify both ForAllArchitectures() and ForArchitecture(). Choose one.");
+
+        if (_downloadAllLanguages && !string.IsNullOrEmpty(_language))
+            throw new ArgumentException("Cannot specify both ForAllLanguages() and ForLanguage(). Choose one.");
+
+        // Branch password requires branch
+        if (!string.IsNullOrEmpty(_branchPassword) && string.IsNullOrEmpty(_branch))
+            throw new ArgumentException("BranchPassword requires a branch to be specified. Use FromBranch().");
+
+        // Resume requires install directory
+        if (_resume && string.IsNullOrWhiteSpace(_installDirectory))
+            throw new ArgumentException("Resume requires an install directory. Use ToDirectory().");
+
+        // Range validation
+        if (_maxDownloads < 1 || _maxDownloads > 64)
+            throw new ArgumentOutOfRangeException(nameof(_maxDownloads), "MaxDownloads must be between 1 and 64.");
+
+        if (_maxBytesPerSecond is < 0)
+            throw new ArgumentOutOfRangeException(nameof(_maxBytesPerSecond), "MaxBytesPerSecond cannot be negative.");
+
+        // OS validation
+        if (!string.IsNullOrEmpty(_os) && _os is not ("windows" or "linux" or "macos"))
+            throw new ArgumentException("Os must be 'windows', 'linux', or 'macos'.", nameof(_os));
+
+        // Architecture validation
+        if (!string.IsNullOrEmpty(_architecture) && _architecture is not ("32" or "64"))
+            throw new ArgumentException("Architecture must be '32' or '64'.", nameof(_architecture));
 
         return new DepotDownloadOptions
         {
