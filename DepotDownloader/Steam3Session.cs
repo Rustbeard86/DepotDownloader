@@ -258,6 +258,8 @@ internal class Steam3Session
         if (depotKey.Result != EResult.OK) return;
 
         DepotKeys[depotKey.DepotID] = depotKey.DepotKey;
+        _userInterface.WriteLine("Depot {0} decryption key: {1}", depotKey.DepotID, 
+            Convert.ToHexStringLower(depotKey.DepotKey));
     }
 
 
