@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using System.Threading;
 
@@ -7,6 +8,8 @@ namespace DepotDownloader.Lib;
 /// <summary>
 ///     Configuration options for downloading depot content.
 /// </summary>
+[SuppressMessage("ReSharper", "PropertyCanBeMadeInitOnly.Global",
+    Justification = "Properties are set incrementally by CLI and other consumers")]
 public sealed class DepotDownloadOptions
 {
     /// <summary>

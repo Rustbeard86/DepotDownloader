@@ -23,9 +23,9 @@ public sealed class RetryPolicy
     public static RetryPolicy Aggressive { get; } = new()
     {
         MaxRetries = 10,
-        InitialDelay = TimeSpan.FromMilliseconds(500),
-        MaxDelay = TimeSpan.FromSeconds(60),
-        BackoffMultiplier = 2.0
+        InitialDelayValue = TimeSpan.FromMilliseconds(500),
+        MaxDelayValue = TimeSpan.FromSeconds(60),
+        BackoffMultiplierValue = 2.0
     };
 
     /// <summary>
@@ -33,25 +33,11 @@ public sealed class RetryPolicy
     /// </summary>
     public int MaxRetries { get; init; } = 5;
 
-    /// <summary>
-    ///     Initial delay before the first retry. Default is 1 second.
-    /// </summary>
-    public TimeSpan InitialDelay { get; init; } = TimeSpan.FromSeconds(1);
-
-    /// <summary>
-    ///     Maximum delay between retries. Default is 30 seconds.
-    /// </summary>
-    public TimeSpan MaxDelay { get; init; } = TimeSpan.FromSeconds(30);
-
-    /// <summary>
-    ///     Multiplier for exponential backoff. Default is 2.0 (doubles each retry).
-    /// </summary>
-    public double BackoffMultiplier { get; init; } = 2.0;
-
-    /// <summary>
-    ///     Whether to add random jitter to delays to prevent thundering herd. Default is true.
-    /// </summary>
-    public bool UseJitter { get; init; } = true;
+    // Internal configuration - used by GetDelay()
+    private TimeSpan InitialDelayValue { get; init; } = TimeSpan.FromSeconds(1);
+    private TimeSpan MaxDelayValue { get; init; } = TimeSpan.FromSeconds(30);
+    private double BackoffMultiplierValue { get; init; } = 2.0;
+    private bool UseJitterValue { get; init; } = true;
 
     /// <summary>
     ///     Calculates the delay for a given retry attempt.
@@ -64,13 +50,13 @@ public sealed class RetryPolicy
             return TimeSpan.Zero;
 
         // Calculate exponential backoff
-        var delayMs = InitialDelay.TotalMilliseconds * Math.Pow(BackoffMultiplier, attempt);
+        var delayMs = InitialDelayValue.TotalMilliseconds * Math.Pow(BackoffMultiplierValue, attempt);
 
         // Cap at max delay
-        delayMs = Math.Min(delayMs, MaxDelay.TotalMilliseconds);
+        delayMs = Math.Min(delayMs, MaxDelayValue.TotalMilliseconds);
 
         // Add jitter if enabled (±25%)
-        if (UseJitter)
+        if (UseJitterValue)
         {
             var jitter = delayMs * 0.25 * (Random.Shared.NextDouble() * 2 - 1);
             delayMs += jitter;
@@ -87,12 +73,15 @@ public sealed class RetryPolicy
         TimeSpan? initialDelay = null,
         TimeSpan? maxDelay = null,
         double backoffMultiplier = 2.0,
-        bool useJitter = true) => new()
+        bool useJitter = true)
     {
-        MaxRetries = maxRetries,
-        InitialDelay = initialDelay ?? TimeSpan.FromSeconds(1),
-        MaxDelay = maxDelay ?? TimeSpan.FromSeconds(30),
-        BackoffMultiplier = backoffMultiplier,
-        UseJitter = useJitter
-    };
+        return new RetryPolicy
+        {
+            MaxRetries = maxRetries,
+            InitialDelayValue = initialDelay ?? TimeSpan.FromSeconds(1),
+            MaxDelayValue = maxDelay ?? TimeSpan.FromSeconds(30),
+            BackoffMultiplierValue = backoffMultiplier,
+            UseJitterValue = useJitter
+        };
+    }
 }
