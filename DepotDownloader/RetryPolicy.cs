@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 
 namespace DepotDownloader.Lib;
 
@@ -20,7 +21,7 @@ public sealed class RetryPolicy
     /// <summary>
     ///     Aggressive retry policy for unreliable connections.
     /// </summary>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("CodeQuality", "IDE0051:Remove unused private members")]
+    [SuppressMessage("CodeQuality", "IDE0051:Remove unused private members")]
     public static RetryPolicy Aggressive { get; } = new()
     {
         MaxRetries = 10,

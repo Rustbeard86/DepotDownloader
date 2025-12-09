@@ -33,13 +33,13 @@ public sealed class DepotDownloadOptionsBuilder
     private string _language;
     private uint? _loginId;
     private bool _lowViolence;
+    private long? _maxBytesPerSecond;
     private int _maxDownloads = 8;
     private string _os;
+    private bool _resume;
+    private RetryPolicy _retryPolicy = RetryPolicy.Default;
     private bool _verifyAll;
     private bool _verifyDiskSpace = true;
-    private RetryPolicy _retryPolicy = RetryPolicy.Default;
-    private long? _maxBytesPerSecond;
-    private bool _resume;
 
     /// <summary>
     ///     Sets the Steam AppID to download.
@@ -304,7 +304,8 @@ public sealed class DepotDownloadOptionsBuilder
     /// <param name="initialDelay">Initial delay before first retry.</param>
     /// <param name="maxDelay">Maximum delay between retries.</param>
     /// <returns>The builder instance for chaining.</returns>
-    public DepotDownloadOptionsBuilder WithRetry(int maxRetries, TimeSpan? initialDelay = null, TimeSpan? maxDelay = null)
+    public DepotDownloadOptionsBuilder WithRetry(int maxRetries, TimeSpan? initialDelay = null,
+        TimeSpan? maxDelay = null)
     {
         _retryPolicy = RetryPolicy.Create(maxRetries, initialDelay, maxDelay);
         return this;

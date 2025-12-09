@@ -417,7 +417,7 @@ internal static class DepotFileDownloader
                 }
                 catch (TaskCanceledException)
                 {
-                    userInterface?.WriteLine("Connection timeout downloading chunk {0}", chunkId);
+                    userInterface?.WriteLine("Chunk {0}: connection timeout, retrying...", chunkId);
                     cdnPool.ReturnBrokenConnection(connection);
                 }
                 catch (SteamKitWebRequestException e)
@@ -439,13 +439,12 @@ internal static class DepotFileDownloader
 
                     if (e.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                     {
-                        userInterface?.WriteLine("Encountered {1} for chunk {0}. Aborting.", chunkId,
+                        userInterface?.WriteLine("Chunk {0}: HTTP {1} (access denied). Aborting.", chunkId,
                             (int)e.StatusCode);
                         break;
                     }
 
-                    userInterface?.WriteLine("Encountered error downloading chunk {0}: {1}", chunkId,
-                        e.StatusCode);
+                    userInterface?.WriteLine("Chunk {0}: HTTP {1}, retrying...", chunkId, e.StatusCode);
                 }
                 catch (OperationCanceledException)
                 {
@@ -454,24 +453,23 @@ internal static class DepotFileDownloader
                 catch (Exception e)
                 {
                     cdnPool.ReturnBrokenConnection(connection);
-                    userInterface?.WriteLine("Encountered unexpected error downloading chunk {0}: {1}", chunkId,
-                        e.Message);
+                    userInterface?.WriteLine("Chunk {0}: {1} Retrying...", chunkId, e.Message);
                 }
 
                 // Apply retry policy
                 if (written == 0 && retryAttempt < retryPolicy.MaxRetries)
                 {
                     var delay = retryPolicy.GetDelay(retryAttempt);
-                    userInterface?.WriteLine("Retry {0}/{1} for chunk {2} after {3:F1}s",
-                        retryAttempt + 1, retryPolicy.MaxRetries, chunkId, delay.TotalSeconds);
+                    userInterface?.WriteLine("  Retry {0}/{1} in {2:F1}s...",
+                        retryAttempt + 1, retryPolicy.MaxRetries, delay.TotalSeconds);
 
                     await Task.Delay(delay, cts.Token);
                     retryAttempt++;
                 }
                 else if (written == 0 && retryAttempt >= retryPolicy.MaxRetries)
                 {
-                    userInterface?.WriteLine("Max retries ({0}) exceeded for chunk {1}",
-                        retryPolicy.MaxRetries, chunkId);
+                    userInterface?.WriteLine("Chunk {0}: max retries ({1}) exceeded.",
+                        chunkId, retryPolicy.MaxRetries);
                     break;
                 }
             } while (written == 0);

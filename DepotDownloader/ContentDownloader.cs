@@ -126,14 +126,14 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
 
     /// <summary>
     ///     Shuts down the Steam3 session and clears caches.
-    ///     Called automatically by Dispose, but can be called explicitly 
+    ///     Called automatically by Dispose, but can be called explicitly
     ///     to clean up before reconnection or when reusing the downloader.
     /// </summary>
     public void ShutdownSteam3()
     {
         if (Steam3 is null)
             return;
-            
+
         _logger.ShuttingDownSteam3();
         Steam3.Disconnect();
         Steam3 = null;
@@ -708,11 +708,8 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
             var appId = depots.FirstOrDefault()?.AppId ?? 0;
             var branch = depots.FirstOrDefault()?.Branch ?? "public";
             var isResuming = stateStore.LoadOrCreate(appId, branch, Config.Resume);
-            
-            if (isResuming)
-            {
-                _userInterface?.WriteLine("Resuming previous download...");
-            }
+
+            if (isResuming) _userInterface?.WriteLine("Resuming previous download...");
         }
 
         foreach (var depot in depots)
@@ -723,9 +720,10 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
             {
                 depotsToDownload.Add(depotFileData);
                 allFileNamesAllDepots.UnionWith(depotFileData.AllFileNames);
-                
+
                 // Initialize depot in state store
-                stateStore?.InitializeDepot(depot.DepotId, depot.ManifestId, depotFileData.DepotCounter.CompleteDownloadSize);
+                stateStore?.InitializeDepot(depot.DepotId, depot.ManifestId,
+                    depotFileData.DepotCounter.CompleteDownloadSize);
             }
 
             cts.Token.ThrowIfCancellationRequested();
@@ -861,8 +859,8 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
                     }
                     catch (TaskCanceledException)
                     {
-                        _userInterface?.WriteLine("Connection timeout downloading depot manifest {0} {1}. Retrying.",
-                            depot.DepotId, depot.ManifestId);
+                        _userInterface?.WriteLine("Manifest {0}: connection timeout, retrying...",
+                            depot.ManifestId);
                     }
                     catch (SteamKitWebRequestException e)
                     {
@@ -879,20 +877,20 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
 
                         if (e.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                         {
-                            _userInterface?.WriteLine("Encountered {2} for depot manifest {0} {1}. Aborting.",
-                                depot.DepotId, depot.ManifestId, (int)e.StatusCode);
+                            _userInterface?.WriteLine("Manifest {0}: HTTP {1} (access denied). Aborting.",
+                                depot.ManifestId, (int)e.StatusCode);
                             break;
                         }
 
                         if (e.StatusCode == HttpStatusCode.NotFound)
                         {
-                            _userInterface?.WriteLine("Encountered 404 for depot manifest {0} {1}. Aborting.",
-                                depot.DepotId, depot.ManifestId);
+                            _userInterface?.WriteLine("Manifest {0}: HTTP 404 (not found). Aborting.",
+                                depot.ManifestId);
                             break;
                         }
 
-                        _userInterface?.WriteLine("Encountered error downloading depot manifest {0} {1}: {2}",
-                            depot.DepotId, depot.ManifestId, e.StatusCode);
+                        _userInterface?.WriteLine("Manifest {0}: HTTP {1}, retrying...",
+                            depot.ManifestId, e.StatusCode);
                     }
                     catch (OperationCanceledException)
                     {
@@ -901,8 +899,8 @@ internal sealed class ContentDownloader(IUserInterface userInterface, ILogger lo
                     catch (Exception e)
                     {
                         _cdnPool.ReturnBrokenConnection(connection);
-                        _userInterface?.WriteLine("Encountered error downloading manifest for depot {0} {1}: {2}",
-                            depot.DepotId, depot.ManifestId, e.Message);
+                        _userInterface?.WriteLine("Manifest {0}: {1} Retrying...",
+                            depot.ManifestId, e.Message);
                     }
                 } while (newManifest is null);
 
