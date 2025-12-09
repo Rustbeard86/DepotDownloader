@@ -50,7 +50,7 @@ public record BranchInfo(
 /// <summary>
 ///     Information about a file that would be downloaded.
 /// </summary>
-/// <param name="FileName">The file path relative to the install directory.</param>
+/// <param name="FileName">The file path relative to the installation directory.</param>
 /// <param name="Size">The file size in bytes.</param>
 /// <param name="Hash">The SHA-1 hash of the file.</param>
 public record FileDownloadInfo(string FileName, ulong Size, string Hash);

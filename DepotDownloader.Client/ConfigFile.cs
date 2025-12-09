@@ -7,7 +7,7 @@ namespace DepotDownloader.Client;
 /// <summary>
 ///     Configuration file model for JSON-based configuration.
 /// </summary>
-internal sealed class ConfigFile
+public sealed class ConfigFile
 {
     /// <summary>
     ///     Steam username for authentication.

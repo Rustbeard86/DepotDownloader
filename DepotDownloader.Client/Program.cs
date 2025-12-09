@@ -1,1116 +1,189 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
 using System.IO;
-using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using DepotDownloader.Client.Commands;
 using DepotDownloader.Lib;
 
 namespace DepotDownloader.Client;
 
 internal class Program
 {
-    private static bool[] _consumedArgs;
-    private static ConfigFile _config;
-    private static ConsoleUserInterface _userInterface;
-
     private static async Task<int> Main(string[] args)
     {
-        // Initialize the user interface first
-        _userInterface = new ConsoleUserInterface();
+        var ui = new ConsoleUserInterface();
 
-        switch (args.Length)
+        if (args.Length == 0)
         {
-            case 0:
-                PrintVersion();
-                PrintUsage();
-                return 0;
-            // Not using HasParameter because it is case-insensitive
-            case 1 when args[0] == "-V" || args[0] == "--version":
-                PrintVersion(true);
-                return 0;
+            PrintVersion(ui);
+            HelpGenerator.PrintFullHelp(ui);
+            return 0;
         }
 
-        _consumedArgs = new bool[args.Length];
+        // Handle help requests
+        if (args.Length == 1 && (args[0] == "-h" || args[0] == "--help"))
+        {
+            HelpGenerator.PrintFullHelp(ui);
+            return 0;
+        }
 
-        // Load config file if specified (do this early so CLI args can override)
-        var configPath = GetParameter<string>(args, "-config") ?? GetParameter<string>(args, "--config");
+        if (args.Length == 2 && (args[0] == "-h" || args[0] == "--help"))
+        {
+            HelpGenerator.PrintCommandHelp(ui, args[1]);
+            return 0;
+        }
+
+        if (args.Length == 1 && (args[0] == "-V" || args[0] == "--version"))
+        {
+            PrintVersion(ui, true);
+            return 0;
+        }
+
+        var parser = new ArgumentParser(args);
+
+        // Load config file
+        var configPath = parser.Get<string>(null, "-config", "--config");
+        ConfigFile config = null;
         if (configPath is not null)
             try
             {
                 var configJson = await File.ReadAllTextAsync(configPath);
-                _config = JsonSerializer.Deserialize(configJson, ConfigFileContext.Default.ConfigFile);
-                _userInterface.WriteLine("Loaded config from: {0}", configPath);
+                config = JsonSerializer.Deserialize(configJson, ConfigFileContext.Default.ConfigFile);
+                ui.WriteLine("Loaded config from: {0}", configPath);
             }
             catch (Exception ex)
             {
-                _userInterface.WriteError("Error loading config file: {0}", ex.Message);
+                ui.WriteError("Error loading config file: {0}", ex.Message);
                 return 1;
             }
 
-        // Create the library client - this handles all initialization
-        using var client = new DepotDownloaderClient(_userInterface);
+        using var client = new DepotDownloaderClient(ui);
 
-        // Enable debug logging if requested (CLI takes precedence over config)
-        if (HasParameter(args, "-debug") || (_config?.Debug ?? false))
+        // Enable debug logging
+        if (parser.Has("-debug") || (config?.Debug ?? false))
         {
-            PrintVersion(true);
+            PrintVersion(ui, true);
             client.EnableDebugLogging();
         }
 
-        // Parse authentication parameters (CLI takes precedence over config)
-        var username = GetParameter<string>(args, "-username") ??
-                       GetParameter<string>(args, "-user") ?? _config?.Username;
-        var password = GetParameter<string>(args, "-password") ?? GetParameter<string>(args, "-pass");
-        var rememberPassword = HasParameter(args, "-remember-password") || (_config?.RememberPassword ?? false);
-        var useQrCode = HasParameter(args, "-qr") || (_config?.UseQrCode ?? false);
-        var skipAppConfirmation = HasParameter(args, "-no-mobile") || (_config?.NoMobile ?? false);
+        // Parse authentication
+        var username = parser.Get<string>(null, "-username", "-user") ?? config?.Username;
+        var password = parser.Get<string>(null, "-password", "-pass");
+        var rememberPassword = parser.Has("-remember-password") || (config?.RememberPassword ?? false);
+        var useQrCode = parser.Has("-qr") || (config?.UseQrCode ?? false);
+        var skipAppConfirmation = parser.Has("-no-mobile") || (config?.NoMobile ?? false);
 
-        // Validate authentication parameter combinations
-        if (username is null)
+        // Validate authentication combinations
+        if (username is null && rememberPassword && !useQrCode)
         {
-            if (rememberPassword && !useQrCode)
-            {
-                _userInterface.WriteLine("Error: -remember-password can not be used without -username or -qr.");
-                return 1;
-            }
-        }
-        else if (useQrCode)
-        {
-            _userInterface.WriteLine("Error: -qr can not be used with -username.");
+            ui.WriteLine("Error: -remember-password can not be used without -username or -qr.");
             return 1;
         }
 
-        // Parse download options (CLI takes precedence over config)
-        var appId = GetParameter(args, "-app", _config?.AppId ?? SteamConstants.InvalidAppId);
+        if (username is not null && useQrCode)
+        {
+            ui.WriteLine("Error: -qr can not be used with -username.");
+            return 1;
+        }
+
+        // Parse app ID
+        var appId = parser.Get(config?.AppId ?? SteamConstants.InvalidAppId, "-app");
         if (appId == SteamConstants.InvalidAppId)
         {
-            _userInterface.WriteLine("Error: -app not specified!");
+            ui.WriteLine("Error: -app not specified!");
             return 1;
         }
 
-        // Check for query-only commands
-        var listDepots = HasParameter(args, "-list-depots") || HasParameter(args, "--list-depots");
-        var listBranches = HasParameter(args, "-list-branches") || HasParameter(args, "--list-branches");
-        var getManifest = HasParameter(args, "-get-manifest") || HasParameter(args, "--get-manifest");
-        var checkSpace = HasParameter(args, "-check-space") || HasParameter(args, "--check-space");
-        var dryRun = HasParameter(args, "-dry-run") || HasParameter(args, "--dry-run");
-        var verbose = HasParameter(args, "-verbose") || HasParameter(args, "-v");
-        var jsonOutput = HasParameter(args, "-json") || HasParameter(args, "--json");
-        var noProgress = HasParameter(args, "-no-progress") || HasParameter(args, "--no-progress");
-        var noResume = HasParameter(args, "-no-resume") || HasParameter(args, "--no-resume");
-        var failFast = HasParameter(args, "-fail-fast") || HasParameter(args, "--fail-fast");
+        // Parse command flags
+        var jsonOutput = parser.Has("-json", "--json");
 
-        var pubFile = GetParameter(args, "-pubfile", SteamConstants.InvalidManifestId);
-        var ugcId = GetParameter(args, "-ugc", SteamConstants.InvalidManifestId);
+        // Support both full names and aliases
+        var listDepots = parser.Has("-list-depots", "--list-depots") ||
+                         parser.Has("-depots", "-list-depot");
+        var listBranches = parser.Has("-list-branches", "--list-branches") ||
+                           parser.Has("-branches", "-list-branch");
+        var getManifest = parser.Has("-get-manifest", "--get-manifest") ||
+                          parser.Has("-manifest", "-show-manifest");
+        var checkSpace = parser.Has("-check-space", "--check-space") ||
+                         parser.Has("-space", "-disk-space");
+        var dryRun = parser.Has("-dry-run", "--dry-run") ||
+                     parser.Has("-plan", "-preview");
 
-        // Build download options (unless this is a query-only command)
+        var verbose = parser.Has("-verbose", "-v");
+        var noProgress = parser.Has("-no-progress", "--no-progress");
+        var noResume = parser.Has("-no-resume", "--no-resume");
+        var failFast = parser.Has("-fail-fast", "--fail-fast");
+
+        var pubFile = parser.Get(SteamConstants.InvalidManifestId, "-pubfile");
+        var ugcId = parser.Get(SteamConstants.InvalidManifestId, "-ugc");
+
+        // Build download options (unless query-only)
         DepotDownloadOptions options = null;
         if (!listDepots && !listBranches && !getManifest)
         {
-            options = await BuildDownloadOptionsAsync(args, appId);
-            options.Resume = !noResume; // Resume by default
+            var optionsBuilder = new OptionsBuilder(parser, config, ui);
+            options = await optionsBuilder.BuildAsync(appId);
+            options.Resume = !noResume;
             options.FailFast = failFast;
         }
 
-        PrintUnconsumedArgs(args);
+        // Check unconsumed arguments
+        if (parser.HasUnconsumedArgs())
+        {
+            foreach (var arg in parser.GetUnconsumedArgs())
+                ui.WriteError(arg + " was not used.");
+            ui.WriteError("Make sure you specified the arguments correctly. Check --help for correct arguments.");
+            ui.WriteError("");
+        }
 
         // Authenticate
-        bool loginSuccess;
-        if (useQrCode)
-            loginSuccess = client.LoginWithQrCode(rememberPassword, skipAppConfirmation);
-        else if (username is not null)
-            loginSuccess = client.Login(username, password, rememberPassword, skipAppConfirmation);
-        else
-            loginSuccess = client.LoginAnonymous(skipAppConfirmation);
+        var loginSuccess = useQrCode
+            ? client.LoginWithQrCode(rememberPassword, skipAppConfirmation)
+            : username is not null
+                ? client.Login(username, password, rememberPassword, skipAppConfirmation)
+                : client.LoginAnonymous(skipAppConfirmation);
 
         if (!loginSuccess)
         {
             if (jsonOutput)
-                WriteJsonError("Authentication failed");
+                JsonOutput.WriteError("Authentication failed");
             else
-                _userInterface.WriteLine("Error: Authentication failed");
+                ui.WriteLine("Error: Authentication failed");
             return 1;
         }
 
-        // Handle query commands
-        if (listDepots)
-            return await ListDepotsAsync(client, appId, jsonOutput);
+        // Create command context
+        var context = new CommandContext(client, ui, parser, config, jsonOutput);
 
-        if (listBranches)
-            return await ListBranchesAsync(client, appId, jsonOutput);
-
-        if (getManifest)
+        // Route to command handler
+        ICommand command = (listDepots, listBranches, getManifest, checkSpace, dryRun) switch
         {
-            var depotId = GetParameter<uint>(args, "-depot");
-            var branch = GetParameter<string>(args, "-branch") ?? SteamConstants.DefaultBranch;
-            var branchPassword = GetParameter<string>(args, "-branchpassword");
-            return await GetManifestAsync(client, appId, depotId, branch, branchPassword, jsonOutput);
-        }
-
-        if (checkSpace)
-            return await CheckSpaceAsync(client, options, jsonOutput);
-
-        if (dryRun)
-            return await DryRunAsync(client, options, verbose, jsonOutput);
-
-        // Perform download
-        try
-        {
-            // Setup progress bar if not disabled and not in JSON mode
-            ProgressBar progressBar = null;
-            var downloadStartTime = DateTime.UtcNow;
-
-            if (!jsonOutput && !noProgress && !Console.IsOutputRedirected)
-            {
-                progressBar = new ProgressBar();
-                client.DownloadProgress += (_, e) =>
-                {
-                    progressBar.Update(
-                        e.BytesDownloaded,
-                        e.TotalBytes,
-                        e.SpeedBytesPerSecond,
-                        e.EstimatedTimeRemaining,
-                        e.FilesCompleted,
-                        e.TotalFiles);
-                };
-            }
-
-            DownloadResult result = null;
-
-            if (pubFile != SteamConstants.InvalidManifestId)
-                await client.DownloadPublishedFileAsync(appId, pubFile);
-            else if (ugcId != SteamConstants.InvalidManifestId)
-                await client.DownloadUgcAsync(appId, ugcId);
-            else
-                result = await client.DownloadAppAsync(options);
-
-            progressBar?.Complete();
-
-            // Check for partial failures
-            if (result is not null && result.FailedDepots > 0)
-            {
-                var duration = DateTime.UtcNow - downloadStartTime;
-
-                if (jsonOutput)
-                {
-                    WriteJsonPartialSuccess(appId, duration, result);
-                }
-                else
-                {
-                    _userInterface.WriteLine();
-                    _userInterface.WriteError("Download completed with errors:");
-                    _userInterface.WriteError("  Successful depots: {0}", result.SuccessfulDepots);
-                    _userInterface.WriteError("  Failed depots:     {0}", result.FailedDepots);
-
-                    foreach (var failure in result.Failures)
-                        _userInterface.WriteError("    Depot {0}: {1}", failure.DepotId, failure.ErrorMessage);
-                }
-
-                // Return partial success exit code
-                return result.AllFailed ? 1 : 2;
-            }
-
-            if (jsonOutput)
-            {
-                var duration = DateTime.UtcNow - downloadStartTime;
-                WriteJsonSuccess(appId, duration, result);
-            }
-
-            return 0;
-        }
-        catch (InsufficientDiskSpaceException ex)
-        {
-            if (jsonOutput)
-            {
-                WriteJsonError(
-                    $"Insufficient disk space on {ex.TargetDrive}. Required: {ex.RequiredBytes}, Available: {ex.AvailableBytes}");
-            }
-            else
-            {
-                _userInterface.WriteLine();
-                _userInterface.WriteError("Error: Insufficient disk space!");
-                _userInterface.WriteError("  Drive:      {0}", ex.TargetDrive);
-                _userInterface.WriteError("  Required:   {0}", FormatSize(ex.RequiredBytes));
-                _userInterface.WriteError("  Available:  {0}", FormatSize(ex.AvailableBytes));
-                _userInterface.WriteError("  Shortfall:  {0}", FormatSize(ex.ShortfallBytes));
-                _userInterface.WriteLine();
-                _userInterface.WriteLine("Free up disk space or use -skip-disk-check to bypass this check.");
-            }
-
-            return 1;
-        }
-        catch (ContentDownloaderException ex)
-        {
-            if (jsonOutput)
-                WriteJsonError(ex.Message);
-            else
-                _userInterface.WriteLine(ex.Message);
-            return 1;
-        }
-        catch (OperationCanceledException)
-        {
-            if (jsonOutput)
-                WriteJsonError("Download was cancelled");
-            else
-                _userInterface.WriteLine("Download was cancelled.");
-            return 1;
-        }
-        catch (Exception e)
-        {
-            if (jsonOutput)
-                WriteJsonError($"Download failed: {e.Message}");
-            else
-                _userInterface.WriteLine("Download failed due to an unhandled exception: {0}", e.Message);
-            throw;
-        }
-    }
-
-    private static async Task<int> ListDepotsAsync(DepotDownloaderClient client, uint appId, bool jsonOutput)
-    {
-        try
-        {
-            var appInfo = await client.GetAppInfoAsync(appId);
-            var depots = await client.GetDepotsAsync(appId);
-
-            if (jsonOutput)
-            {
-                JsonOutput.WriteDepots(new DepotsResultJson
-                {
-                    AppId = appId,
-                    AppName = appInfo.Name,
-                    AppType = appInfo.Type,
-                    Depots =
-                    [
-                        .. depots.Select(d => new DepotJson
-                        {
-                            DepotId = d.DepotId,
-                            Name = d.Name,
-                            Os = d.Os,
-                            Architecture = d.Architecture,
-                            Language = d.Language,
-                            MaxSize = d.MaxSize,
-                            IsSharedInstall = d.IsSharedInstall
-                        })
-                    ]
-                });
-                return 0;
-            }
-
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("Depots for {0} ({1}) [Type: {2}]:", appInfo.Name, appInfo.AppId, appInfo.Type);
-            _userInterface.WriteLine();
-
-            if (depots.Count == 0)
-            {
-                _userInterface.WriteLine("  No depots found.");
-                return 0;
-            }
-
-            // Column headers
-            _userInterface.WriteLine("  {0,-10} {1,-40} {2,-15} {3,-6} {4,-10} {5}",
-                "DepotID", "Name", "OS", "Arch", "Language", "Size");
-            _userInterface.WriteLine("  {0}", new string('-', 100));
-
-            foreach (var depot in depots.OrderBy(d => d.DepotId))
-            {
-                var os = depot.Os ?? "all";
-                var arch = depot.Architecture ?? "-";
-                var lang = depot.Language ?? "-";
-                var size = depot.MaxSize.HasValue ? FormatSize(depot.MaxSize.Value) : "-";
-                var name = depot.Name ?? "(unnamed)";
-                var shared = depot.IsSharedInstall ? " [shared]" : "";
-
-                if (name.Length > 38)
-                    name = name[..35] + "...";
-
-                _userInterface.WriteLine("  {0,-10} {1,-40} {2,-15} {3,-6} {4,-10} {5}{6}",
-                    depot.DepotId, name, os, arch, lang, size, shared);
-            }
-
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("Total: {0} depot(s)", depots.Count);
-
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            if (jsonOutput)
-                JsonOutput.WriteError($"Error listing depots: {ex.Message}");
-            else
-                _userInterface.WriteLine("Error listing depots: {0}", ex.Message);
-            return 1;
-        }
-    }
-
-    private static async Task<int> ListBranchesAsync(DepotDownloaderClient client, uint appId, bool jsonOutput)
-    {
-        try
-        {
-            var appInfo = await client.GetAppInfoAsync(appId);
-            var branches = await client.GetBranchesAsync(appId);
-
-            if (jsonOutput)
-            {
-                JsonOutput.WriteBranches(new BranchesResultJson
-                {
-                    AppId = appId,
-                    AppName = appInfo.Name,
-                    Branches =
-                    [
-                        .. branches.Select(b => new BranchJson
-                        {
-                            Name = b.Name,
-                            BuildId = b.BuildId,
-                            TimeUpdated = b.TimeUpdated,
-                            IsPasswordProtected = b.IsPasswordProtected,
-                            Description = b.Description
-                        })
-                    ]
-                });
-                return 0;
-            }
-
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("Branches for {0} ({1}):", appInfo.Name, appId);
-            _userInterface.WriteLine();
-
-            if (branches.Count == 0)
-            {
-                _userInterface.WriteLine("  No branches found.");
-                return 0;
-            }
-
-            // Column headers
-            _userInterface.WriteLine("  {0,-20} {1,-12} {2,-22} {3,-12} {4}",
-                "Branch", "BuildID", "Updated", "Protected", "Description");
-            _userInterface.WriteLine("  {0}", new string('-', 90));
-
-            foreach (var branch in branches.OrderBy(b => b.Name == "public" ? 0 : 1).ThenBy(b => b.Name))
-            {
-                var updated = branch.TimeUpdated?.ToString("yyyy-MM-dd HH:mm") ?? "-";
-                var protection = branch.IsPasswordProtected ? "Yes" : "No";
-                var description = branch.Description ?? "";
-
-                if (description.Length > 30)
-                    description = description[..27] + "...";
-
-                _userInterface.WriteLine("  {0,-20} {1,-12} {2,-22} {3,-12} {4}",
-                    branch.Name, branch.BuildId, updated, protection, description);
-            }
-
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("Total: {0} branch(es)", branches.Count);
-
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            if (jsonOutput)
-                JsonOutput.WriteError($"Error listing branches: {ex.Message}");
-            else
-                _userInterface.WriteLine("Error listing branches: {0}", ex.Message);
-            return 1;
-        }
-    }
-
-    private static async Task<int> GetManifestAsync(DepotDownloaderClient client, uint appId, uint depotId,
-        string branch, string branchPassword, bool jsonOutput)
-    {
-        try
-        {
-            if (depotId == 0)
-            {
-                if (jsonOutput)
-                    WriteJsonError("Depot ID must be specified with -depot when using -get-manifest");
-                else
-                    _userInterface.WriteError("Error: -depot must be specified when using -get-manifest");
-                return 1;
-            }
-
-            var manifestId = await client.GetLatestManifestIdAsync(appId, depotId, branch, branchPassword);
-
-            if (jsonOutput)
-            {
-                JsonOutput.WriteManifest(new ManifestResultJson
-                {
-                    AppId = appId,
-                    DepotId = depotId,
-                    Branch = branch,
-                    ManifestId = manifestId,
-                    Found = manifestId.HasValue
-                });
-                return manifestId.HasValue ? 0 : 1;
-            }
-
-            if (manifestId.HasValue)
-            {
-                _userInterface.WriteLine();
-                _userInterface.WriteLine("Latest manifest for app {0}, depot {1}, branch '{2}':",
-                    appId, depotId, branch);
-                _userInterface.WriteLine("  Manifest ID: {0}", manifestId.Value);
-                _userInterface.WriteLine();
-                _userInterface.WriteLine("To download this specific manifest:");
-                _userInterface.WriteLine("  depotdownloader -app {0} -depot {1} -manifest {2}",
-                    appId, depotId, manifestId.Value);
-            }
-            else
-            {
-                _userInterface.WriteError("No manifest found for app {0}, depot {1}, branch '{2}'",
-                    appId, depotId, branch);
-                _userInterface.WriteError("This could mean:");
-                _userInterface.WriteError("  - The depot doesn't exist");
-                _userInterface.WriteError("  - The branch doesn't exist or requires a password");
-                _userInterface.WriteError("  - Your account doesn't have access to this depot");
-            }
-
-            return manifestId.HasValue ? 0 : 1;
-        }
-        catch (Exception ex)
-        {
-            if (jsonOutput)
-                WriteJsonError($"Error getting manifest: {ex.Message}");
-            else
-                _userInterface.WriteError("Error getting manifest: {0}", ex.Message);
-            return 1;
-        }
-    }
-
-    private static async Task<int> CheckSpaceAsync(DepotDownloaderClient client, DepotDownloadOptions options,
-        bool jsonOutput)
-    {
-        try
-        {
-            if (!jsonOutput)
-            {
-                _userInterface.WriteLine();
-                _userInterface.WriteLine("Checking required disk space...");
-            }
-
-            var requiredBytes = await client.GetRequiredDiskSpaceAsync(options);
-            var targetPath = options.InstallDirectory ?? Environment.CurrentDirectory;
-            var fullPath = Path.GetFullPath(targetPath);
-            var root = Path.GetPathRoot(fullPath) ?? fullPath;
-
-            ulong availableBytes = 0;
-            try
-            {
-                var driveInfo = new DriveInfo(root);
-                availableBytes = (ulong)driveInfo.AvailableFreeSpace;
-            }
-            catch
-            {
-                // Ignore drive info errors
-            }
-
-            var hasSufficientSpace = availableBytes >= requiredBytes;
-
-            if (jsonOutput)
-            {
-                JsonOutput.WriteSpaceCheck(new SpaceCheckResultJson
-                {
-                    AppId = options.AppId,
-                    RequiredBytes = requiredBytes,
-                    RequiredSize = FormatSize(requiredBytes),
-                    AvailableBytes = availableBytes,
-                    AvailableSize = FormatSize(availableBytes),
-                    TargetDrive = root,
-                    HasSufficientSpace = hasSufficientSpace
-                });
-                return hasSufficientSpace ? 0 : 1;
-            }
-
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("Disk Space Check for app {0}:", options.AppId);
-            _userInterface.WriteLine("  Target:     {0}", fullPath);
-            _userInterface.WriteLine("  Drive:      {0}", root);
-            _userInterface.WriteLine("  Required:   {0}", FormatSize(requiredBytes));
-            _userInterface.WriteLine("  Available:  {0}", FormatSize(availableBytes));
-            _userInterface.WriteLine();
-
-            if (hasSufficientSpace)
-            {
-                _userInterface.WriteLine("✓ Sufficient disk space available.");
-                return 0;
-            }
-
-            _userInterface.WriteError("✗ Insufficient disk space!");
-            _userInterface.WriteError("  Shortfall: {0}", FormatSize(requiredBytes - availableBytes));
-            return 1;
-        }
-        catch (Exception ex)
-        {
-            if (jsonOutput)
-                WriteJsonError($"Error checking disk space: {ex.Message}");
-            else
-                _userInterface.WriteError("Error checking disk space: {0}", ex.Message);
-            return 1;
-        }
-    }
-
-    private static async Task<int> DryRunAsync(DepotDownloaderClient client, DepotDownloadOptions options, bool verbose,
-        bool jsonOutput)
-    {
-        try
-        {
-            if (!jsonOutput)
-            {
-                _userInterface.WriteLine();
-                _userInterface.WriteLine("Analyzing download plan (dry-run mode)...");
-                _userInterface.WriteLine();
-            }
-
-            var plan = await client.GetDownloadPlanAsync(options);
-
-            if (jsonOutput)
-            {
-                JsonOutput.WriteDryRun(new DryRunResultJson
-                {
-                    AppId = plan.AppId,
-                    AppName = plan.AppName,
-                    TotalDepots = plan.Depots.Count,
-                    TotalFiles = plan.TotalFileCount,
-                    TotalBytes = plan.TotalDownloadSize,
-                    TotalSize = FormatSize(plan.TotalDownloadSize),
-                    Depots =
-                    [
-                        .. plan.Depots.Select(d => new DepotPlanJson
-                        {
-                            DepotId = d.DepotId,
-                            ManifestId = d.ManifestId,
-                            FileCount = d.Files.Count,
-                            TotalBytes = d.TotalSize,
-                            TotalSize = FormatSize(d.TotalSize),
-                            Files = verbose
-                                ?
-                                [
-                                    .. d.Files.Select(f => new FilePlanJson
-                                    {
-                                        FileName = f.FileName,
-                                        Size = f.Size,
-                                        Hash = f.Hash
-                                    })
-                                ]
-                                : null
-                        })
-                    ]
-                });
-                return 0;
-            }
-
-            _userInterface.WriteLine("Download Plan for {0} ({1}):", plan.AppName, plan.AppId);
-            _userInterface.WriteLine();
-
-            if (plan.Depots.Count == 0)
-            {
-                _userInterface.WriteLine("  No depots would be downloaded.");
-                return 0;
-            }
-
-            foreach (var depot in plan.Depots)
-            {
-                _userInterface.WriteLine("  Depot {0} (Manifest {1})", depot.DepotId, depot.ManifestId);
-                _userInterface.WriteLine("    Files: {0}", depot.Files.Count);
-                _userInterface.WriteLine("    Size:  {0}", FormatSize(depot.TotalSize));
-
-                // Show file details in verbose mode
-                if (verbose && depot.Files.Count > 0)
-                {
-                    _userInterface.WriteLine();
-                    _userInterface.WriteLine("    Files:");
-                    foreach (var file in depot.Files.OrderBy(f => f.FileName).Take(50))
-                        _userInterface.WriteLine("      {0,-60} {1,12} {2}",
-                            file.FileName.Length > 58 ? "..." + file.FileName[^55..] : file.FileName,
-                            FormatSize(file.Size),
-                            file.Hash[..8]);
-                    if (depot.Files.Count > 50)
-                        _userInterface.WriteLine("      ... and {0} more files", depot.Files.Count - 50);
-                }
-
-                _userInterface.WriteLine();
-            }
-
-            _userInterface.WriteLine(new string('-', 50));
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("Summary:");
-            _userInterface.WriteLine("  Total depots:     {0}", plan.Depots.Count);
-            _userInterface.WriteLine("  Total files:      {0:N0}", plan.TotalFileCount);
-            _userInterface.WriteLine("  Total size:       {0}", FormatSize(plan.TotalDownloadSize));
-
-            // Estimate download time at various speeds
-            if (plan.TotalDownloadSize > 0)
-            {
-                _userInterface.WriteLine();
-                _userInterface.WriteLine("Estimated download time:");
-                _userInterface.WriteLine("  At 10 MB/s:  {0}",
-                    FormatDuration(plan.TotalDownloadSize / (10 * 1024 * 1024)));
-                _userInterface.WriteLine("  At 50 MB/s:  {0}",
-                    FormatDuration(plan.TotalDownloadSize / (50 * 1024 * 1024)));
-                _userInterface.WriteLine("  At 100 MB/s: {0}",
-                    FormatDuration(plan.TotalDownloadSize / (100 * 1024 * 1024)));
-            }
-
-            _userInterface.WriteLine();
-            _userInterface.WriteLine("To download, run the same command without --dry-run");
-
-            return 0;
-        }
-        catch (ContentDownloaderException ex)
-        {
-            if (jsonOutput)
-                WriteJsonError(ex.Message);
-            else
-                _userInterface.WriteLine("Error: {0}", ex.Message);
-            return 1;
-        }
-        catch (Exception ex)
-        {
-            if (jsonOutput)
-                WriteJsonError($"Error getting download plan: {ex.Message}");
-            else
-                _userInterface.WriteLine("Error getting download plan: {0}", ex.Message);
-            return 1;
-        }
-    }
-
-    private static string FormatDuration(ulong seconds)
-    {
-        if (seconds < 60)
-            return $"{seconds} seconds";
-        if (seconds < 3600)
-            return $"{seconds / 60} min {seconds % 60} sec";
-        return $"{seconds / 3600}h {seconds % 3600 / 60}m";
-    }
-
-    private static string FormatSize(ulong bytes)
-    {
-        string[] sizes = ["B", "KB", "MB", "GB", "TB"];
-        var order = 0;
-        double size = bytes;
-
-        while (size >= 1024 && order < sizes.Length - 1)
-        {
-            order++;
-            size /= 1024;
-        }
-
-        return $"{size:0.##} {sizes[order]}";
-    }
-
-    private static async Task<DepotDownloadOptions> BuildDownloadOptionsAsync(string[] args, uint appId)
-    {
-        // Helper to get CLI param or fall back to config value
-        var useLancache = HasParameter(args, "-use-lancache") || (_config?.UseLancache ?? false);
-
-        var options = new DepotDownloadOptions
-        {
-            AppId = appId,
-            DownloadManifestOnly = HasParameter(args, "-manifest-only") || (_config?.ManifestOnly ?? false),
-            InstallDirectory = GetParameter<string>(args, "-dir") ?? _config?.InstallDirectory,
-            VerifyAll = HasParameter(args, "-verify-all") ||
-                        HasParameter(args, "-verify_all") ||
-                        HasParameter(args, "-validate") ||
-                        (_config?.Validate ?? false),
-            MaxDownloads = GetParameter(args, "-max-downloads", _config?.MaxDownloads ?? 8),
-            LoginId = HasParameter(args, "-loginid")
-                ? GetParameter<uint>(args, "-loginid")
-                : _config?.LoginId,
-            VerifyDiskSpace = !HasParameter(args, "-skip-disk-check") &&
-                              !HasParameter(args, "--skip-disk-check") &&
-                              !(_config?.SkipDiskCheck ?? false)
+            (true, _, _, _, _) => new ListDepotsCommand(appId),
+            (_, true, _, _, _) => new ListBranchesCommand(appId),
+            (_, _, true, _, _) => new GetManifestCommand(
+                appId,
+                parser.Get<uint>(0, "-depot"),
+                parser.Get<string>(null, "-branch") ?? SteamConstants.DefaultBranch,
+                parser.Get<string>(null, "-branchpassword")),
+            (_, _, _, true, _) => new CheckSpaceCommand(options),
+            (_, _, _, _, true) => new DryRunCommand(options, verbose),
+            _ => new DownloadCommand(options, pubFile, ugcId, noProgress)
         };
 
-        // Speed limiting
-        var maxSpeedMbps = GetParameter<double?>(args, "-max-speed");
-        if (maxSpeedMbps.HasValue)
-        {
-            if (maxSpeedMbps.Value <= 0)
-            {
-                options.MaxBytesPerSecond = null; // Unlimited
-                _userInterface.WriteLine("Speed limit: unlimited");
-            }
-            else
-            {
-                options.MaxBytesPerSecond = (long)(maxSpeedMbps.Value * 1024 * 1024);
-                _userInterface.WriteLine("Speed limit: {0:F1} MB/s", maxSpeedMbps.Value);
-            }
-        }
-
-        // Retry configuration
-        var maxRetries = GetParameter(args, "-retries", -1);
-        if (maxRetries >= 0)
-        {
-            options.RetryPolicy = maxRetries == 0 ? RetryPolicy.None : RetryPolicy.Create(maxRetries);
-            _userInterface.WriteLine("Max retries: {0}", maxRetries);
-        }
-
-        // Cell ID (CLI overrides config)
-        var cellId = GetParameter(args, "-cellid", _config?.CellId ?? -1);
-        options.CellId = cellId == -1 ? 0 : cellId;
-
-        // Lancache detection
-        if (useLancache)
-        {
-            await SteamKit2.CDN.Client.DetectLancacheServerAsync();
-            if (SteamKit2.CDN.Client.UseLancacheServer)
-            {
-                _userInterface.WriteLine(
-                    "Detected Lancache server! Downloads will be directed through the Lancache.");
-
-                // Increase concurrent downloads for lancache if not explicitly set
-                if (!HasParameter(args, "-max-downloads") && _config?.MaxDownloads is null)
-                    options.MaxDownloads = 25;
-            }
-        }
-
-        // File list (CLI overrides config)
-        var fileList = GetParameter<string>(args, "-filelist") ?? _config?.FileList;
-        if (fileList is not null)
-        {
-            const string regexPrefix = "regex:";
-
-            try
-            {
-                options.FilesToDownload = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                options.FilesToDownloadRegex = [];
-
-                var files = await File.ReadAllLinesAsync(fileList);
-
-                foreach (var fileEntry in files)
-                {
-                    if (string.IsNullOrWhiteSpace(fileEntry)) continue;
-
-                    if (fileEntry.StartsWith(regexPrefix))
-                    {
-                        var rgx = new Regex(fileEntry[regexPrefix.Length..],
-                            RegexOptions.Compiled | RegexOptions.IgnoreCase);
-                        options.FilesToDownloadRegex.Add(rgx);
-                    }
-                    else
-                    {
-                        options.FilesToDownload.Add(fileEntry.Replace('\\', '/'));
-                    }
-                }
-
-                _userInterface.WriteLine("Using filelist: '{0}'.", fileList);
-            }
-            catch (Exception ex)
-            {
-                _userInterface.WriteLine("Warning: Unable to load filelist: {0}", ex);
-            }
-        }
-
-        // Branch options (CLI overrides config)
-        var branch = GetParameter<string>(args, "-branch") ??
-                     GetParameter<string>(args, "-beta") ??
-                     _config?.Branch ??
-                     SteamConstants.DefaultBranch;
-        options.Branch = branch;
-        options.BranchPassword = GetParameter<string>(args, "-branchpassword") ??
-                                 GetParameter<string>(args, "-betapassword") ??
-                                 _config?.BranchPassword;
-
-        if (!string.IsNullOrEmpty(options.BranchPassword) && string.IsNullOrEmpty(branch))
-            throw new ArgumentException("Cannot specify -branchpassword when -branch is not specified.");
-
-        // Platform options (CLI overrides config)
-        options.DownloadAllPlatforms = HasParameter(args, "-all-platforms") || (_config?.AllPlatforms ?? false);
-        options.Os = GetParameter<string>(args, "-os") ?? _config?.Os;
-
-        if (options.DownloadAllPlatforms && !string.IsNullOrEmpty(options.Os))
-            throw new ArgumentException("Cannot specify -os when -all-platforms is specified.");
-
-        // Architecture options (CLI overrides config)
-        options.DownloadAllArchs = HasParameter(args, "-all-archs") || (_config?.AllArchs ?? false);
-        options.Architecture = GetParameter<string>(args, "-osarch") ?? _config?.OsArch;
-
-        if (options.DownloadAllArchs && !string.IsNullOrEmpty(options.Architecture))
-            throw new ArgumentException("Cannot specify -osarch when -all-archs is specified.");
-
-        // Language options (CLI overrides config)
-        options.DownloadAllLanguages = HasParameter(args, "-all-languages") || (_config?.AllLanguages ?? false);
-        options.Language = GetParameter<string>(args, "-language") ?? _config?.Language;
-
-        if (options.DownloadAllLanguages && !string.IsNullOrEmpty(options.Language))
-            throw new ArgumentException("Cannot specify -language when -all-languages is specified.");
-
-        // Low violence (CLI overrides config)
-        options.LowViolence = HasParameter(args, "-lowviolence") || (_config?.LowViolence ?? false);
-
-        // Depot and manifest IDs (CLI overrides config)
-        var depotIdList = GetParameterList<uint>(args, "-depot");
-        var manifestIdList = GetParameterList<ulong>(args, "-manifest");
-
-        // If CLI didn't specify depots, use config
-        if (depotIdList.Count == 0 && _config?.Depots is { Count: > 0 })
-        {
-            depotIdList = _config.Depots;
-            manifestIdList = _config.Manifests ?? [];
-        }
-
-        if (manifestIdList.Count > 0)
-        {
-            if (depotIdList.Count != manifestIdList.Count)
-                throw new ArgumentException("-manifest requires one id for every -depot specified");
-
-            options.DepotManifestIds =
-                [.. depotIdList.Zip(manifestIdList, (depotId, manifestId) => (depotId, manifestId))];
-        }
-        else
-        {
-            options.DepotManifestIds =
-                [.. depotIdList.Select(depotId => (depotId, SteamConstants.InvalidManifestId))];
-        }
-
-        return options;
+        return await command.ExecuteAsync(context);
     }
 
-    private static int IndexOfParam(string[] args, string param)
-    {
-        for (var x = 0; x < args.Length; ++x)
-            if (args[x].Equals(param, StringComparison.OrdinalIgnoreCase))
-            {
-                _consumedArgs[x] = true;
-                return x;
-            }
-
-        return -1;
-    }
-
-    private static bool HasParameter(string[] args, string param)
-    {
-        return IndexOfParam(args, param) > -1;
-    }
-
-    private static T GetParameter<T>(string[] args, string param, T defaultValue = default)
-    {
-        var index = IndexOfParam(args, param);
-
-        if (index == -1 || index == args.Length - 1)
-            return defaultValue;
-
-        var strParam = args[index + 1];
-
-        var converter = TypeDescriptor.GetConverter(typeof(T));
-        _consumedArgs[index + 1] = true;
-        return (T)converter.ConvertFromString(strParam);
-    }
-
-    private static List<T> GetParameterList<T>(string[] args, string param)
-    {
-        var list = new List<T>();
-        var index = IndexOfParam(args, param);
-
-        if (index == -1 || index == args.Length - 1)
-            return list;
-
-        index++;
-
-        while (index < args.Length)
-        {
-            var strParam = args[index];
-
-            if (strParam[0] == '-') break;
-
-            var converter = TypeDescriptor.GetConverter(typeof(T));
-            _consumedArgs[index] = true;
-            list.Add((T)converter.ConvertFromString(strParam));
-
-            index++;
-        }
-
-        return list;
-    }
-
-    private static void PrintUnconsumedArgs(string[] args)
-    {
-        var printError = false;
-
-        for (var index = 0; index < _consumedArgs.Length; index++)
-            if (!_consumedArgs[index])
-            {
-                printError = true;
-                _userInterface.WriteError($"Argument #{index + 1} {args[index]} was not used.");
-            }
-
-        if (printError)
-        {
-            _userInterface.WriteError(
-                "Make sure you specified the arguments correctly. Check --help for correct arguments.");
-            _userInterface.WriteError("");
-        }
-    }
-
-    private static void PrintUsage()
-    {
-        // Do not use tabs to align parameters here because tab size may differ
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("Usage: downloading one or all depots for an app:");
-        _userInterface.WriteLine("       depotdownloader -app <id> [-depot <id> [-manifest <id>]]");
-        _userInterface.WriteLine(
-            "                       [-username <username> [-password <password>]] [other options]");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("Usage: listing depots or branches for an app:");
-        _userInterface.WriteLine("       depotdownloader -app <id> -list-depots [-username <username>]");
-        _userInterface.WriteLine("       depotdownloader -app <id> -list-branches [-username <username>]");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("Usage: getting latest manifest ID for a depot:");
-        _userInterface.WriteLine("       depotdownloader -app <id> -depot <id> -get-manifest [-branch <name>]");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("Usage: checking required disk space:");
-        _userInterface.WriteLine("       depotdownloader -app <id> -check-space [-dir <path>]");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("Usage: downloading a workshop item using pubfile id");
-        _userInterface.WriteLine(
-            "       depotdownloader -app <id> -pubfile <id> [-username <username> [-password <password>]]");
-        _userInterface.WriteLine("Usage: downloading a workshop item using ugc id");
-        _userInterface.WriteLine(
-            "       depotdownloader -app <id> -ugc <id> [-username <username> [-password <password>]]");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("Usage: using a config file:");
-        _userInterface.WriteLine("       depotdownloader -config <config.json> [overrides]");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("Parameters:");
-        _userInterface.WriteLine("  -app <#>                 - the AppID to download.");
-        _userInterface.WriteLine("  -depot <#>               - the DepotID to download.");
-        _userInterface.WriteLine(
-            "  -manifest <id>           - manifest id of content to download (requires -depot, default: current for branch).");
-        _userInterface.WriteLine(
-            $"  -branch <branchname>     - download from specified branch if available (default: {SteamConstants.DefaultBranch}).");
-        _userInterface.WriteLine("  -branchpassword <pass>   - branch password if applicable.");
-        _userInterface.WriteLine(
-            "  -all-platforms           - downloads all platform-specific depots when -app is used.");
-        _userInterface.WriteLine(
-            "  -all-archs               - download all architecture-specific depots when -app is used.");
-        _userInterface.WriteLine(
-            "  -os <os>                 - the operating system for which to download the game (windows, macos or linux, default: OS the program is currently running on)");
-        _userInterface.WriteLine(
-            "  -osarch <arch>           - the architecture for which to download the game (32 or 64, default: the host's architecture)");
-        _userInterface.WriteLine(
-            "  -all-languages           - download all language-specific depots when -app is used.");
-        _userInterface.WriteLine(
-            "  -language <lang>         - the language for which to download the game (default: english)");
-        _userInterface.WriteLine("  -lowviolence             - download low violence depots when -app is used.");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("  -ugc <#>                 - the UGC ID to download.");
-        _userInterface.WriteLine(
-            "  -pubfile <#>             - the PublishedFileId to download. (Will automatically resolve to UGC id)");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine(
-            "  -username <user>         - the username of the account to login to for restricted content.");
-        _userInterface.WriteLine(
-            "  -password <pass>         - the password of the account to login to for restricted content.");
-        _userInterface.WriteLine(
-            "  -remember-password       - if set, remember the password for subsequent logins of this user.");
-        _userInterface.WriteLine(
-            "                             use -username <username> -remember-password as login credentials.");
-        _userInterface.WriteLine(
-            "  -qr                      - display a login QR code to be scanned with the Steam mobile app");
-        _userInterface.WriteLine(
-            "  -no-mobile               - prefer entering a 2FA code instead of prompting to accept in the Steam mobile app");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("  -dir <installdir>        - the directory in which to place downloaded files.");
-        _userInterface.WriteLine(
-            "  -filelist <file.txt>     - the name of a local file that contains a list of files to download (from the manifest).");
-        _userInterface.WriteLine(
-            "                             prefix file path with `regex:` if you want to match with regex. each file path should be on their own line.");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine(
-            "  -validate                - include checksum verification of files already downloaded");
-        _userInterface.WriteLine(
-            "  -manifest-only           - downloads a human readable manifest for any depots that would be downloaded.");
-        _userInterface.WriteLine(
-            "  -cellid <#>              - the overridden CellID of the content server to download from.");
-        _userInterface.WriteLine(
-            "  -max-downloads <#>       - maximum number of chunks to download concurrently. (default: 8).");
-        _userInterface.WriteLine(
-            "  -max-speed <#>           - maximum download speed in MB/s (0 for unlimited, e.g., -max-speed 10 for 10 MB/s).");
-        _userInterface.WriteLine(
-            "  -retries <#>             - maximum retry attempts per chunk (default: 5, use 0 to disable).");
-        _userInterface.WriteLine(
-            "  -fail-fast               - stop immediately on first depot failure instead of continuing.");
-        _userInterface.WriteLine(
-            "  -loginid <#>             - a unique 32-bit integer Steam LogonID in decimal, required if running multiple instances of DepotDownloader concurrently.");
-        _userInterface.WriteLine(
-            "  -use-lancache            - forces downloads over the local network via a Lancache instance.");
-        _userInterface.WriteLine(
-            "  -skip-disk-check         - skip disk space verification before downloading.");
-        _userInterface.WriteLine(
-            "  -no-resume               - disable automatic resume of interrupted downloads (resume is enabled by default).");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("  -config <file.json>      - load settings from a JSON configuration file.");
-        _userInterface.WriteLine("                             CLI arguments override config file settings.");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("  -list-depots             - list all depots for the specified app and exit.");
-        _userInterface.WriteLine("  -list-branches           - list all branches for the specified app and exit.");
-        _userInterface.WriteLine(
-            "  -get-manifest            - get the latest manifest ID for a depot (requires -depot).");
-        _userInterface.WriteLine("  -check-space             - check required disk space without downloading.");
-        _userInterface.WriteLine("  -dry-run                 - show what would be downloaded without downloading.");
-        _userInterface.WriteLine("  -verbose, -v             - show detailed output (e.g., file list in dry-run).");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine(
-            "  -json                    - output results in JSON format for scripting/automation.");
-        _userInterface.WriteLine("  -no-progress             - disable the progress bar during downloads.");
-        _userInterface.WriteLine();
-        _userInterface.WriteLine("  -debug                   - enable verbose debug logging.");
-        _userInterface.WriteLine("  -V or --version          - print version and runtime.");
-    }
-
-    private static void PrintVersion(bool printExtra = false)
+    private static void PrintVersion(ConsoleUserInterface ui, bool printExtra = false)
     {
         var version = typeof(Program).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             ?.InformationalVersion ?? "Unknown";
 
-        _userInterface.WriteLine($"DepotDownloader v{version}");
+        ui.WriteLine($"DepotDownloader v{version}");
 
-        if (!printExtra) return;
-
-        _userInterface.WriteLine(
-            $"Runtime: {RuntimeInformation.FrameworkDescription} on {RuntimeInformation.OSDescription}");
-    }
-
-    private static void WriteJsonError(string message)
-    {
-        JsonOutput.WriteError(message);
-    }
-
-    private static void WriteJsonSuccess(uint appId, TimeSpan duration, DownloadResult result)
-    {
-        JsonOutput.WriteSuccess(new DownloadResultJson
-        {
-            AppId = appId,
-            DurationSeconds = duration.TotalSeconds,
-            TotalBytesDownloaded = result?.TotalBytesDownloaded ?? 0,
-            TotalFilesDownloaded = result?.TotalFilesDownloaded ?? 0,
-            SuccessfulDepots = result?.SuccessfulDepots ?? 0,
-            FailedDepots = result?.FailedDepots ?? 0
-        });
-    }
-
-    private static void WriteJsonPartialSuccess(uint appId, TimeSpan duration, DownloadResult result)
-    {
-        JsonOutput.WritePartialSuccess(new DownloadResultJson
-        {
-            AppId = appId,
-            DurationSeconds = duration.TotalSeconds,
-            TotalBytesDownloaded = result.TotalBytesDownloaded,
-            TotalFilesDownloaded = result.TotalFilesDownloaded,
-            SuccessfulDepots = result.SuccessfulDepots,
-            FailedDepots = result.FailedDepots,
-            Failures =
-            [
-                .. result.Failures.Select(f => new DepotFailureJson
-                {
-                    DepotId = f.DepotId,
-                    ErrorMessage = f.ErrorMessage
-                })
-            ]
-        });
+        if (printExtra)
+            ui.WriteLine($"Runtime: {RuntimeInformation.FrameworkDescription} on {RuntimeInformation.OSDescription}");
     }
 }
