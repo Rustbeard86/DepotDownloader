@@ -1,3 +1,4 @@
+using DepotDownloader.Lib;
 using Serilog;
 using WorkshopArchiver.Daemon;
 
@@ -18,6 +19,15 @@ try
 
     var builder = Host.CreateApplicationBuilder(args);
 
+    // Add platform-specific configuration
+    var environmentName = builder.Environment.EnvironmentName;
+    builder.Configuration
+        .AddJsonFile("appsettings.json", false, true)
+        .AddJsonFile($"appsettings.{environmentName}.json", true, true);
+
+    // Add Windows-specific config if on Windows
+    if (OperatingSystem.IsWindows()) builder.Configuration.AddJsonFile("appsettings.windows.json", true, true);
+
     builder.Services.AddSerilog((services, config) => config
         .ReadFrom.Services(services)
         .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
@@ -27,7 +37,11 @@ try
             retainedFileCountLimit: 30,
             outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}"));
 
-    builder.Services.AddSystemd();
+    // Add platform-specific service integration
+    if (OperatingSystem.IsWindows())
+        builder.Services.AddWindowsService(options => { options.ServiceName = "WorkshopArchiver"; });
+    else
+        builder.Services.AddSystemd();
 
     builder.Services.Configure<WorkshopOptions>(builder.Configuration.GetSection(WorkshopOptions.SectionName));
     builder.Services.Configure<SteamOptions>(builder.Configuration.GetSection(SteamOptions.SectionName));
@@ -60,9 +74,13 @@ static async Task RunSetupModeAsync(string[] args)
     Console.WriteLine();
 
     // Load configuration
-    var config = new ConfigurationBuilder()
+    var configBuilder = new ConfigurationBuilder()
         .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false)
+        .AddJsonFile("appsettings.json", false);
+
+    if (OperatingSystem.IsWindows()) configBuilder.AddJsonFile("appsettings.windows.json", true);
+
+    var config = configBuilder
         .AddEnvironmentVariables()
         .Build();
 
@@ -88,9 +106,9 @@ static async Task RunSetupModeAsync(string[] args)
     Console.WriteLine("You may be prompted for 2FA code.");
     Console.WriteLine();
 
-    using var client = new DepotDownloader.Lib.DepotDownloaderClient(new SetupUserInterface());
+    using var client = new DepotDownloaderClient(new SetupUserInterface());
 
-    var result = client.Login(steamOptions.Username, steamOptions.Password, rememberPassword: true);
+    var result = client.Login(steamOptions.Username, steamOptions.Password, true);
 
     if (result)
     {
@@ -116,9 +134,7 @@ static async Task RunSetupModeAsync(string[] args)
                 {
                     Console.WriteLine("Sample items:");
                     foreach (var item in queryResult.Items.Take(3))
-                    {
                         Console.WriteLine($"  - {item.PublishedFileId}: {item.Title}");
-                    }
                 }
             }
             catch (Exception ex)
@@ -143,7 +159,7 @@ static string ReadPassword()
 
     do
     {
-        key = Console.ReadKey(intercept: true);
+        key = Console.ReadKey(true);
 
         if (key.Key == ConsoleKey.Backspace && password.Length > 0)
         {
@@ -160,23 +176,69 @@ static string ReadPassword()
     return password;
 }
 
-sealed class SetupUserInterface : DepotDownloader.Lib.IUserInterface
+internal sealed class SetupUserInterface : IUserInterface
 {
     public bool IsInputRedirected => false;
     public bool IsOutputRedirected => false;
 
-    public void Write(string message) => Console.Write(message);
-    public void Write(string format, params object[] args) => Console.Write(format, args);
-    public void WriteDebug(string category, string message) { }
-    public void WriteLine() => Console.WriteLine();
-    public void WriteLine(string message) => Console.WriteLine(message);
-    public void WriteLine(string format, params object[] args) => Console.WriteLine(format, args);
-    public void WriteError(string message) => Console.Error.WriteLine(message);
-    public void WriteError(string format, params object[] args) => Console.Error.WriteLine(format, args);
-    public string ReadLine() => Console.ReadLine() ?? string.Empty;
-    public string ReadPassword() => WorkshopArchiver.Daemon.Program.ReadPassword();
-    public ConsoleKeyInfo ReadKey(bool intercept) => Console.ReadKey(intercept);
-    public void UpdateProgress(ulong downloaded, ulong total) { }
+    public void Write(string message)
+    {
+        Console.Write(message);
+    }
+
+    public void Write(string format, params object[] args)
+    {
+        Console.Write(format, args);
+    }
+
+    public void WriteDebug(string category, string message)
+    {
+    }
+
+    public void WriteLine()
+    {
+        Console.WriteLine();
+    }
+
+    public void WriteLine(string message)
+    {
+        Console.WriteLine(message);
+    }
+
+    public void WriteLine(string format, params object[] args)
+    {
+        Console.WriteLine(format, args);
+    }
+
+    public void WriteError(string message)
+    {
+        Console.Error.WriteLine(message);
+    }
+
+    public void WriteError(string format, params object[] args)
+    {
+        Console.Error.WriteLine(format, args);
+    }
+
+    public string ReadLine()
+    {
+        return Console.ReadLine() ?? string.Empty;
+    }
+
+    public string ReadPassword()
+    {
+        return WorkshopArchiver.Daemon.Program.ReadPassword();
+    }
+
+    public ConsoleKeyInfo ReadKey(bool intercept)
+    {
+        return Console.ReadKey(intercept);
+    }
+
+    public void UpdateProgress(ulong downloaded, ulong total)
+    {
+    }
+
     public void DisplayQrCode(string challengeUrl)
     {
         Console.WriteLine();
@@ -188,7 +250,7 @@ sealed class SetupUserInterface : DepotDownloader.Lib.IUserInterface
 
 namespace WorkshopArchiver.Daemon
 {
-    public static partial class Program
+    public static class Program
     {
         public static string ReadPassword()
         {
@@ -197,7 +259,7 @@ namespace WorkshopArchiver.Daemon
 
             do
             {
-                key = Console.ReadKey(intercept: true);
+                key = Console.ReadKey(true);
 
                 if (key.Key == ConsoleKey.Backspace && password.Length > 0)
                 {

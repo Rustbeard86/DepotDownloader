@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -429,7 +430,7 @@ public sealed class DepotDownloaderClient : IDisposable
     public async IAsyncEnumerable<WorkshopItemInfo> QueryAllWorkshopItemsAsync(
         uint appId,
         TimeSpan? delayBetweenPages = null,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         ThrowIfNotLoggedIn();
@@ -441,20 +442,14 @@ public sealed class DepotDownloaderClient : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var result = await QueryWorkshopItemsAsync(appId, page, 100);
+            var result = await QueryWorkshopItemsAsync(appId, page);
 
-            foreach (var item in result.Items)
-            {
-                yield return item;
-            }
+            foreach (var item in result.Items) yield return item;
 
             hasMore = result.HasMoreItems;
             page++;
 
-            if (hasMore && delayBetweenPages.HasValue)
-            {
-                await Task.Delay(delayBetweenPages.Value, cancellationToken);
-            }
+            if (hasMore && delayBetweenPages.HasValue) await Task.Delay(delayBetweenPages.Value, cancellationToken);
         } while (hasMore);
     }
 

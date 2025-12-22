@@ -3,22 +3,28 @@ using Microsoft.Extensions.Options;
 
 namespace WorkshopArchiver.Daemon;
 
+/// <summary>
+///     Background service that archives Steam Workshop items.
+///     Supports runtime configuration changes via appsettings.json reload.
+/// </summary>
 public sealed class WorkshopArchiverWorker : BackgroundService
 {
-    private readonly ILogger<WorkshopArchiverWorker> _logger;
-    private readonly WorkshopOptions _options;
-    private readonly IWorkshopTracker _tracker;
     private readonly WorkshopDownloadService _downloadService;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly ILogger<WorkshopArchiverWorker> _logger;
+    private readonly IOptionsMonitor<WorkshopOptions> _optionsMonitor;
+    private readonly IWorkshopTracker _tracker;
+
+    private uint _currentAppId;
 
     public WorkshopArchiverWorker(
-        IOptions<WorkshopOptions> options,
+        IOptionsMonitor<WorkshopOptions> optionsMonitor,
         IWorkshopTracker tracker,
         WorkshopDownloadService downloadService,
         IHostApplicationLifetime lifetime,
         ILogger<WorkshopArchiverWorker> logger)
     {
-        _options = options.Value;
+        _optionsMonitor = optionsMonitor;
         _tracker = tracker;
         _downloadService = downloadService;
         _lifetime = lifetime;
@@ -27,7 +33,13 @@ public sealed class WorkshopArchiverWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Workshop Archiver starting for AppId {AppId}", _options.AppId);
+        var options = _optionsMonitor.CurrentValue;
+        _currentAppId = options.AppId;
+
+        _logger.LogInformation("Workshop Archiver starting for AppId {AppId}", _currentAppId);
+        _logger.LogInformation("Output path: {OutputPath}", options.OutputPath);
+        _logger.LogInformation("Download path: {DownloadPath}", options.DownloadPath);
+        _logger.LogInformation("Database path: {DatabasePath}", options.DatabasePath);
 
         // Initialize database
         await _tracker.InitializeAsync(stoppingToken);
@@ -43,11 +55,12 @@ public sealed class WorkshopArchiverWorker : BackgroundService
         try
         {
             // Initial archive run
-            await RunArchivePassAsync(isInitial: true, stoppingToken);
+            await RunArchivePassAsync(true, stoppingToken);
 
             // Polling loop
-            var pollInterval = TimeSpan.FromMinutes(_options.PollIntervalMinutes);
-            _logger.LogInformation("Initial archive complete. Polling every {Minutes} minutes", _options.PollIntervalMinutes);
+            var pollInterval = TimeSpan.FromMinutes(options.PollIntervalMinutes);
+            _logger.LogInformation("Initial archive complete. Polling every {Minutes} minutes",
+                options.PollIntervalMinutes);
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -56,7 +69,19 @@ public sealed class WorkshopArchiverWorker : BackgroundService
                 if (stoppingToken.IsCancellationRequested)
                     break;
 
-                await RunArchivePassAsync(isInitial: false, stoppingToken);
+                // Check for AppId changes
+                var currentOptions = _optionsMonitor.CurrentValue;
+                if (currentOptions.AppId != _currentAppId && currentOptions.AppId != 0)
+                {
+                    _logger.LogInformation("AppId changed from {OldAppId} to {NewAppId}", _currentAppId,
+                        currentOptions.AppId);
+                    _currentAppId = currentOptions.AppId;
+                }
+
+                // Update poll interval if changed
+                pollInterval = TimeSpan.FromMinutes(currentOptions.PollIntervalMinutes);
+
+                await RunArchivePassAsync(false, stoppingToken);
                 await RetryFailedDownloadsAsync(stoppingToken);
             }
         }
@@ -77,12 +102,21 @@ public sealed class WorkshopArchiverWorker : BackgroundService
 
     private async Task RunArchivePassAsync(bool isInitial, CancellationToken ct)
     {
-        _logger.LogInformation("Starting {Type} archive pass", isInitial ? "initial" : "update");
+        var options = _optionsMonitor.CurrentValue;
+
+        if (_currentAppId == 0)
+        {
+            _logger.LogWarning("No AppId configured. Skipping archive pass.");
+            return;
+        }
+
+        _logger.LogInformation("Starting {Type} archive pass for AppId {AppId}", isInitial ? "initial" : "update",
+            _currentAppId);
 
         try
         {
             // Query all workshop items
-            var workshopItems = await _downloadService.QueryWorkshopItemsAsync(ct);
+            var workshopItems = await _downloadService.QueryWorkshopItemsAsync(_currentAppId, ct);
 
             // Get known items from database
             var knownItems = (await _tracker.GetAllItemsAsync(ct)).ToDictionary(i => i.PublishedFileId);
@@ -104,14 +138,12 @@ public sealed class WorkshopArchiverWorker : BackgroundService
                 );
 
                 if (knownItems.TryGetValue(item.PublishedFileId, out var existing))
-                {
                     // Preserve archived status
                     dbItem = dbItem with
                     {
                         ArchivedAt = existing.ArchivedAt,
                         ArchivedTimeUpdated = existing.ArchivedTimeUpdated
                     };
-                }
 
                 await _tracker.UpsertItemAsync(dbItem, ct);
 
@@ -148,7 +180,7 @@ public sealed class WorkshopArchiverWorker : BackgroundService
             // Download and archive items with rate limiting
             var successCount = 0;
             var failCount = 0;
-            var delay = TimeSpan.FromSeconds(_options.DelayBetweenDownloadsSeconds);
+            var delay = TimeSpan.FromSeconds(options.DelayBetweenDownloadsSeconds);
 
             foreach (var item in itemsToArchive)
             {
@@ -178,8 +210,9 @@ public sealed class WorkshopArchiverWorker : BackgroundService
 
     private async Task RetryFailedDownloadsAsync(CancellationToken ct)
     {
-        var minAge = TimeSpan.FromMinutes(_options.RetryBackoffMinutes);
-        var failures = await _tracker.GetRetryableFailuresAsync(_options.MaxRetryAttempts, minAge, ct);
+        var options = _optionsMonitor.CurrentValue;
+        var minAge = TimeSpan.FromMinutes(options.RetryBackoffMinutes);
+        var failures = await _tracker.GetRetryableFailuresAsync(options.MaxRetryAttempts, minAge, ct);
 
         if (failures.Count == 0)
             return;
@@ -187,10 +220,10 @@ public sealed class WorkshopArchiverWorker : BackgroundService
         _logger.LogInformation("Retrying {Count} failed downloads", failures.Count);
 
         // Get current workshop items to have the metadata
-        var workshopItems = await _downloadService.QueryWorkshopItemsAsync(ct);
+        var workshopItems = await _downloadService.QueryWorkshopItemsAsync(_currentAppId, ct);
         var itemLookup = workshopItems.ToDictionary(i => i.PublishedFileId);
 
-        var delay = TimeSpan.FromSeconds(_options.DelayBetweenDownloadsSeconds);
+        var delay = TimeSpan.FromSeconds(options.DelayBetweenDownloadsSeconds);
 
         foreach (var failure in failures)
         {
@@ -199,7 +232,8 @@ public sealed class WorkshopArchiverWorker : BackgroundService
 
             if (!itemLookup.TryGetValue(failure.PublishedFileId, out var item))
             {
-                _logger.LogWarning("Failed item {Id} no longer exists in workshop, clearing failure", failure.PublishedFileId);
+                _logger.LogWarning("Failed item {Id} no longer exists in workshop, clearing failure",
+                    failure.PublishedFileId);
                 await _tracker.ClearFailureAsync(failure.PublishedFileId, ct);
                 continue;
             }

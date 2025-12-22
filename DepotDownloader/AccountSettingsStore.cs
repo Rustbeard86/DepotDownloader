@@ -79,7 +79,7 @@ public class AccountSettingsStore
             {
                 if (_instance._fileName == filename)
                     return;
-                
+
                 // Different filename - save current and load new
                 Save();
             }

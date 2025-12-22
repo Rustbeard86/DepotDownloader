@@ -5,8 +5,8 @@ namespace WorkshopArchiver.Daemon;
 
 public sealed class SqliteWorkshopTracker : IWorkshopTracker
 {
-    private readonly ILogger<SqliteWorkshopTracker> _logger;
     private readonly SqliteConnection _connection;
+    private readonly ILogger<SqliteWorkshopTracker> _logger;
 
     public SqliteWorkshopTracker(IOptions<WorkshopOptions> options, ILogger<SqliteWorkshopTracker> logger)
     {
@@ -25,28 +25,28 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
 
         await using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS WorkshopItems (
-                PublishedFileId INTEGER PRIMARY KEY,
-                AppId INTEGER NOT NULL,
-                Title TEXT,
-                TimeCreated INTEGER NOT NULL,
-                TimeUpdated INTEGER NOT NULL,
-                FileSize INTEGER NOT NULL,
-                ArchivedAt TEXT,
-                ArchivedTimeUpdated INTEGER
-            );
+                          CREATE TABLE IF NOT EXISTS WorkshopItems (
+                              PublishedFileId INTEGER PRIMARY KEY,
+                              AppId INTEGER NOT NULL,
+                              Title TEXT,
+                              TimeCreated INTEGER NOT NULL,
+                              TimeUpdated INTEGER NOT NULL,
+                              FileSize INTEGER NOT NULL,
+                              ArchivedAt TEXT,
+                              ArchivedTimeUpdated INTEGER
+                          );
 
-            CREATE TABLE IF NOT EXISTS FailedDownloads (
-                PublishedFileId INTEGER PRIMARY KEY,
-                AppId INTEGER NOT NULL,
-                Attempts INTEGER NOT NULL DEFAULT 1,
-                LastError TEXT NOT NULL,
-                LastAttempt TEXT NOT NULL
-            );
+                          CREATE TABLE IF NOT EXISTS FailedDownloads (
+                              PublishedFileId INTEGER PRIMARY KEY,
+                              AppId INTEGER NOT NULL,
+                              Attempts INTEGER NOT NULL DEFAULT 1,
+                              LastError TEXT NOT NULL,
+                              LastAttempt TEXT NOT NULL
+                          );
 
-            CREATE INDEX IF NOT EXISTS idx_workshop_appid ON WorkshopItems(AppId);
-            CREATE INDEX IF NOT EXISTS idx_failed_attempt ON FailedDownloads(LastAttempt);
-            """;
+                          CREATE INDEX IF NOT EXISTS idx_workshop_appid ON WorkshopItems(AppId);
+                          CREATE INDEX IF NOT EXISTS idx_failed_attempt ON FailedDownloads(LastAttempt);
+                          """;
         await cmd.ExecuteNonQueryAsync(ct);
 
         _logger.LogInformation("Database initialized");
@@ -56,9 +56,9 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
     {
         await using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            SELECT PublishedFileId, AppId, Title, TimeCreated, TimeUpdated, FileSize, ArchivedAt, ArchivedTimeUpdated
-            FROM WorkshopItems WHERE PublishedFileId = $id
-            """;
+                          SELECT PublishedFileId, AppId, Title, TimeCreated, TimeUpdated, FileSize, ArchivedAt, ArchivedTimeUpdated
+                          FROM WorkshopItems WHERE PublishedFileId = $id
+                          """;
         cmd.Parameters.AddWithValue("$id", (long)publishedFileId);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -74,9 +74,9 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
 
         await using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            SELECT PublishedFileId, AppId, Title, TimeCreated, TimeUpdated, FileSize, ArchivedAt, ArchivedTimeUpdated
-            FROM WorkshopItems ORDER BY PublishedFileId
-            """;
+                          SELECT PublishedFileId, AppId, Title, TimeCreated, TimeUpdated, FileSize, ArchivedAt, ArchivedTimeUpdated
+                          FROM WorkshopItems ORDER BY PublishedFileId
+                          """;
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
@@ -89,14 +89,14 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
     {
         await using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO WorkshopItems (PublishedFileId, AppId, Title, TimeCreated, TimeUpdated, FileSize, ArchivedAt, ArchivedTimeUpdated)
-            VALUES ($id, $appId, $title, $created, $updated, $size, $archivedAt, $archivedUpdated)
-            ON CONFLICT(PublishedFileId) DO UPDATE SET
-                Title = excluded.Title,
-                TimeCreated = excluded.TimeCreated,
-                TimeUpdated = excluded.TimeUpdated,
-                FileSize = excluded.FileSize
-            """;
+                          INSERT INTO WorkshopItems (PublishedFileId, AppId, Title, TimeCreated, TimeUpdated, FileSize, ArchivedAt, ArchivedTimeUpdated)
+                          VALUES ($id, $appId, $title, $created, $updated, $size, $archivedAt, $archivedUpdated)
+                          ON CONFLICT(PublishedFileId) DO UPDATE SET
+                              Title = excluded.Title,
+                              TimeCreated = excluded.TimeCreated,
+                              TimeUpdated = excluded.TimeUpdated,
+                              FileSize = excluded.FileSize
+                          """;
         cmd.Parameters.AddWithValue("$id", (long)item.PublishedFileId);
         cmd.Parameters.AddWithValue("$appId", (int)item.AppId);
         cmd.Parameters.AddWithValue("$title", item.Title ?? (object)DBNull.Value);
@@ -104,7 +104,8 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
         cmd.Parameters.AddWithValue("$updated", (int)item.TimeUpdated);
         cmd.Parameters.AddWithValue("$size", (long)item.FileSize);
         cmd.Parameters.AddWithValue("$archivedAt", item.ArchivedAt?.ToString("O") ?? (object)DBNull.Value);
-        cmd.Parameters.AddWithValue("$archivedUpdated", item.ArchivedTimeUpdated.HasValue ? (int)item.ArchivedTimeUpdated.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("$archivedUpdated",
+            item.ArchivedTimeUpdated.HasValue ? (int)item.ArchivedTimeUpdated.Value : DBNull.Value);
 
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -113,10 +114,10 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
     {
         await using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            UPDATE WorkshopItems 
-            SET ArchivedAt = $archivedAt, ArchivedTimeUpdated = $archivedUpdated
-            WHERE PublishedFileId = $id
-            """;
+                          UPDATE WorkshopItems 
+                          SET ArchivedAt = $archivedAt, ArchivedTimeUpdated = $archivedUpdated
+                          WHERE PublishedFileId = $id
+                          """;
         cmd.Parameters.AddWithValue("$id", (long)publishedFileId);
         cmd.Parameters.AddWithValue("$archivedAt", DateTimeOffset.UtcNow.ToString("O"));
         cmd.Parameters.AddWithValue("$archivedUpdated", (int)timeUpdated);
@@ -127,17 +128,18 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
         _logger.LogDebug("Marked {PublishedFileId} as archived", publishedFileId);
     }
 
-    public async Task RecordFailureAsync(ulong publishedFileId, uint appId, string error, CancellationToken ct = default)
+    public async Task RecordFailureAsync(ulong publishedFileId, uint appId, string error,
+        CancellationToken ct = default)
     {
         await using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO FailedDownloads (PublishedFileId, AppId, Attempts, LastError, LastAttempt)
-            VALUES ($id, $appId, 1, $error, $lastAttempt)
-            ON CONFLICT(PublishedFileId) DO UPDATE SET
-                Attempts = Attempts + 1,
-                LastError = excluded.LastError,
-                LastAttempt = excluded.LastAttempt
-            """;
+                          INSERT INTO FailedDownloads (PublishedFileId, AppId, Attempts, LastError, LastAttempt)
+                          VALUES ($id, $appId, 1, $error, $lastAttempt)
+                          ON CONFLICT(PublishedFileId) DO UPDATE SET
+                              Attempts = Attempts + 1,
+                              LastError = excluded.LastError,
+                              LastAttempt = excluded.LastAttempt
+                          """;
         cmd.Parameters.AddWithValue("$id", (long)publishedFileId);
         cmd.Parameters.AddWithValue("$appId", (int)appId);
         cmd.Parameters.AddWithValue("$error", error);
@@ -147,24 +149,24 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
         _logger.LogWarning("Recorded failure for {PublishedFileId}: {Error}", publishedFileId, error);
     }
 
-    public async Task<IReadOnlyList<FailedDownload>> GetRetryableFailuresAsync(int maxAttempts, TimeSpan minAge, CancellationToken ct = default)
+    public async Task<IReadOnlyList<FailedDownload>> GetRetryableFailuresAsync(int maxAttempts, TimeSpan minAge,
+        CancellationToken ct = default)
     {
         var results = new List<FailedDownload>();
         var cutoff = DateTimeOffset.UtcNow.Subtract(minAge);
 
         await using var cmd = _connection.CreateCommand();
         cmd.CommandText = """
-            SELECT PublishedFileId, AppId, Attempts, LastError, LastAttempt 
-            FROM FailedDownloads 
-            WHERE Attempts < $maxAttempts AND LastAttempt < $cutoff
-            ORDER BY LastAttempt ASC
-            """;
+                          SELECT PublishedFileId, AppId, Attempts, LastError, LastAttempt 
+                          FROM FailedDownloads 
+                          WHERE Attempts < $maxAttempts AND LastAttempt < $cutoff
+                          ORDER BY LastAttempt ASC
+                          """;
         cmd.Parameters.AddWithValue("$maxAttempts", maxAttempts);
         cmd.Parameters.AddWithValue("$cutoff", cutoff.ToString("O"));
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
-        {
             results.Add(new FailedDownload(
                 (ulong)reader.GetInt64(0),
                 (uint)reader.GetInt32(1),
@@ -172,7 +174,6 @@ public sealed class SqliteWorkshopTracker : IWorkshopTracker
                 reader.GetString(3),
                 DateTimeOffset.Parse(reader.GetString(4))
             ));
-        }
 
         return results;
     }
