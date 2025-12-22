@@ -29,7 +29,7 @@ public class DownloadConfig
     public string InstallDirectory { get; set; }
     public bool DownloadManifestOnly { get; set; }
     public bool VerifyAll { get; set; }
-    public int MaxDownloads { get; set; }
+    public int MaxDownloads { get; set; } = 8;
 
     // Retry and throttling
     public RetryPolicy RetryPolicy { get; set; } = RetryPolicy.Default;

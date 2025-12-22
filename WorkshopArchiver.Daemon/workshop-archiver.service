@@ -1,0 +1,27 @@
+[Unit]
+Description=Workshop Archiver Daemon
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/opt/workshop-archiver/WorkshopArchiver.Daemon
+WorkingDirectory=/opt/workshop-archiver
+Restart=always
+RestartSec=30
+User=workshop-archiver
+Group=workshop
+
+# Environment file for secrets (Steam username)
+EnvironmentFile=-/etc/workshop-archiver/environment
+
+# Set HOME for IsolatedStorage (used by DepotDownloader for credentials)
+Environment=HOME=/var/lib/workshop-archiver
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/var/lib/workshop-archiver /var/lib/gofile-daemon/watch /opt/workshop-archiver
+
+[Install]
+WantedBy=multi-user.target

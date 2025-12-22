@@ -364,6 +364,42 @@ internal class Steam3Session
             $"EResult {(int)callback.Result} ({callback.Result}) while retrieving UGC details for {ugcHandle}.");
     }
 
+    public async Task<CPublishedFile_QueryFiles_Response> QueryWorkshopFiles(
+        uint appId,
+        uint page = 1,
+        uint itemsPerPage = 100)
+    {
+        var request = new CPublishedFile_QueryFiles_Request
+        {
+            appid = appId,
+            page = page,
+            numperpage = itemsPerPage,
+            query_type = 1, // RankedByPublicationDate
+            return_vote_data = false,
+            return_tags = true,
+            return_kv_tags = false,
+            return_previews = false,
+            return_children = false,
+            return_short_description = true,
+            return_for_sale_data = false,
+            return_metadata = false,
+            return_details = true,
+            totalonly = false,
+            ids_only = false,
+            filetype = (uint)EWorkshopFileType.Community,
+            match_all_tags = false,
+            cache_max_age_seconds = 0
+        };
+
+        var response = await _steamPublishedFile.QueryFiles(request);
+
+        if (response.Result != EResult.OK)
+            throw new Exception(
+                $"EResult {(int)response.Result} ({response.Result}) while querying workshop files for app {appId}.");
+
+        return response.Body;
+    }
+
     private void ResetConnectionFlags()
     {
         _bExpectingDisconnectRemote = false;

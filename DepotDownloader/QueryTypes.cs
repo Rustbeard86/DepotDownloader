@@ -304,3 +304,37 @@ public sealed class DownloadResult
     /// </summary>
     public IEnumerable<DepotDownloadResult> Successes => DepotResults.Where(r => r.Success);
 }
+
+/// <summary>
+///     Information about a Steam Workshop item.
+/// </summary>
+/// <param name="PublishedFileId">The workshop item's published file ID.</param>
+/// <param name="AppId">The app ID this workshop item belongs to.</param>
+/// <param name="Title">The title of the workshop item.</param>
+/// <param name="Description">The description of the workshop item.</param>
+/// <param name="TimeCreated">Unix timestamp when the item was created.</param>
+/// <param name="TimeUpdated">Unix timestamp when the item was last updated.</param>
+/// <param name="FileSize">Size of the workshop item in bytes.</param>
+/// <param name="CreatorSteamId">Steam ID of the creator.</param>
+/// <param name="Tags">Tags associated with the workshop item.</param>
+public record WorkshopItemInfo(
+    ulong PublishedFileId,
+    uint AppId,
+    string Title,
+    string Description,
+    uint TimeCreated,
+    uint TimeUpdated,
+    ulong FileSize,
+    ulong CreatorSteamId,
+    IReadOnlyList<string> Tags);
+
+/// <summary>
+///     Result of a workshop query containing items and pagination info.
+/// </summary>
+/// <param name="Items">The workshop items returned.</param>
+/// <param name="TotalItems">Total number of items matching the query.</param>
+/// <param name="HasMoreItems">Whether there are more items to fetch.</param>
+public record WorkshopQueryResult(
+    IReadOnlyList<WorkshopItemInfo> Items,
+    uint TotalItems,
+    bool HasMoreItems);

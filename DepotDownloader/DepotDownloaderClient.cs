@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -378,6 +379,83 @@ public sealed class DepotDownloaderClient : IDisposable
             throw new ArgumentException("UGC ID must be specified", nameof(ugcId));
 
         await _downloader.DownloadUgcAsync(appId, ugcId);
+    }
+
+    /// <summary>
+    ///     Queries workshop items for a Steam application.
+    /// </summary>
+    /// <param name="appId">The Steam AppID to query workshop items for.</param>
+    /// <param name="page">Page number (1-based).</param>
+    /// <param name="itemsPerPage">Number of items per page (max 100).</param>
+    /// <returns>A WorkshopQueryResult containing the items and pagination info.</returns>
+    public async Task<WorkshopQueryResult> QueryWorkshopItemsAsync(uint appId, uint page = 1, uint itemsPerPage = 100)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+
+        if (itemsPerPage > 100)
+            itemsPerPage = 100;
+
+        var response = await _downloader.Steam3.QueryWorkshopFiles(appId, page, itemsPerPage);
+
+        var items = new List<WorkshopItemInfo>();
+        foreach (var file in response.publishedfiledetails)
+        {
+            var tags = file.tags?.Select(t => t.tag).ToList() ?? [];
+            items.Add(new WorkshopItemInfo(
+                file.publishedfileid,
+                appId,
+                file.title ?? string.Empty,
+                file.short_description ?? string.Empty,
+                file.time_created,
+                file.time_updated,
+                file.file_size,
+                file.creator,
+                tags));
+        }
+
+        var hasMore = page * itemsPerPage < response.total;
+
+        return new WorkshopQueryResult(items, response.total, hasMore);
+    }
+
+    /// <summary>
+    ///     Queries all workshop items for a Steam application, handling pagination automatically.
+    /// </summary>
+    /// <param name="appId">The Steam AppID to query workshop items for.</param>
+    /// <param name="delayBetweenPages">Optional delay between page requests to avoid rate limiting.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>An async enumerable of all workshop items.</returns>
+    public async IAsyncEnumerable<WorkshopItemInfo> QueryAllWorkshopItemsAsync(
+        uint appId,
+        TimeSpan? delayBetweenPages = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ThrowIfNotLoggedIn();
+
+        uint page = 1;
+        bool hasMore;
+
+        do
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var result = await QueryWorkshopItemsAsync(appId, page, 100);
+
+            foreach (var item in result.Items)
+            {
+                yield return item;
+            }
+
+            hasMore = result.HasMoreItems;
+            page++;
+
+            if (hasMore && delayBetweenPages.HasValue)
+            {
+                await Task.Delay(delayBetweenPages.Value, cancellationToken);
+            }
+        } while (hasMore);
     }
 
     /// <summary>
