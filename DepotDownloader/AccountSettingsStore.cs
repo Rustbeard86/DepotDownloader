@@ -74,8 +74,15 @@ public class AccountSettingsStore
     {
         lock (LockObject)
         {
+            // If already loaded with the same filename, just return
             if (_instance is not null)
-                throw new InvalidOperationException("Config already loaded");
+            {
+                if (_instance._fileName == filename)
+                    return;
+                
+                // Different filename - save current and load new
+                Save();
+            }
 
             if (IsolatedStorage.FileExists(filename))
                 try
