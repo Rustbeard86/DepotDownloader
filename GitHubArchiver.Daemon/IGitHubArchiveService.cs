@@ -7,16 +7,16 @@ public enum ArchiveResult
 {
     /// <summary>Successfully archived to GitHub.</summary>
     Success,
-    
+
     /// <summary>Failed due to a transient error (network, rate limit, etc.).</summary>
     TransientFailure,
-    
+
     /// <summary>Failed due to bad credentials - token is invalid or expired.</summary>
     AuthenticationFailure,
-    
+
     /// <summary>Failed due to missing configuration.</summary>
     ConfigurationError,
-    
+
     /// <summary>Failed due to missing content or metadata.</summary>
     ContentError
 }
@@ -34,7 +34,8 @@ public interface IGitHubArchiveService
     /// <param name="contentFolderPath">Path to the downloaded content folder.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Result indicating success or type of failure.</returns>
-    Task<ArchiveResult> ArchiveAndPushAsync(string workshopId, string contentFolderPath, CancellationToken ct = default);
+    Task<ArchiveResult> ArchiveAndPushAsync(string workshopId, string contentFolderPath,
+        CancellationToken ct = default);
 
     /// <summary>
     ///     Flushes the manifest cache to GitHub if there are pending changes.
@@ -42,4 +43,12 @@ public interface IGitHubArchiveService
     /// </summary>
     /// <returns>True if successful or nothing to flush, false if failed.</returns>
     Task<bool> FlushManifestAsync();
+
+    /// <summary>
+    ///     Rebuilds the manifest from GitHub releases and Steam metadata.
+    ///     Useful when manifest gets out of sync with actual releases.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Number of entries in the rebuilt manifest.</returns>
+    Task<int> RebuildManifestAsync(CancellationToken ct = default);
 }

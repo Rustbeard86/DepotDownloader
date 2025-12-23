@@ -140,17 +140,19 @@ print_menu() {
     echo "   16) Verify against Steam Workshop (sample check)"
     echo "   17) Force retry failed items now"
     echo "   18) Re-queue archived items for re-upload"
+    echo "   19) Rebuild manifest from GitHub releases"
+    echo "   20) Backfill preview images for existing releases"
     echo ""
     echo "  Reset & Cleanup:"
-    echo "   19) Clear failed downloads"
-    echo "   20) Clear depot cache"
-    echo "   21) Clear temp files"
-    echo "   22) Full reset (WARNING: deletes all data)"
+    echo "   21) Clear failed downloads"
+    echo "   22) Clear depot cache"
+    echo "   23) Clear temp files"
+    echo "   24) Full reset (WARNING: deletes all data)"
     echo ""
     echo "  Deployment:"
-    echo "   23) Update binary from local build"
-    echo "   24) Edit configuration"
-    echo "   25) Backup database"
+    echo "   25) Update binary from local build"
+    echo "   26) Edit configuration"
+    echo "   27) Backup database"
     echo ""
     echo "  Other:"
     echo "   r) Refresh status"
@@ -815,6 +817,55 @@ backup_database() {
     echo -e "Size: $(du -h "$backup_file" | cut -f1)"
 }
 
+rebuild_manifest() {
+    echo -e "${CYAN}Rebuilding manifest from GitHub releases...${NC}"
+    echo ""
+    echo -e "${YELLOW}This will:${NC}"
+    echo "  1. Fetch all releases from GitHub"
+    echo "  2. Query Steam for metadata for each release"
+    echo "  3. Rebuild workshopcontent.json with all entries"
+    echo ""
+    echo -e "${YELLOW}Note: This may take several minutes for large repos.${NC}"
+    echo ""
+    
+    if ! confirm "Proceed with manifest rebuild?"; then
+        echo "Cancelled."
+        return
+    fi
+    
+    # Stop service if running
+    if systemctl is-active --quiet $SERVICE; then
+        echo -e "${YELLOW}Stopping service for rebuild...${NC}"
+        systemctl stop $SERVICE
+        local was_running=true
+    else
+        local was_running=false
+    fi
+    
+    echo ""
+    echo -e "${CYAN}Running manifest rebuild...${NC}"
+    echo ""
+    
+    # Run the daemon with --rebuild-manifest flag
+    cd "$OPT_DIR"
+    ./GitHubArchiver.Daemon --rebuild-manifest
+    
+    echo ""
+    
+    if [ "$was_running" = true ]; then
+        if confirm "Restart service?"; then
+            start_service
+        fi
+    fi
+}
+
+backfill_images() {
+    if [ -f "$OPT_DIR/backfill-images.sh" ]; then
+        bash "$OPT_DIR/backfill-images.sh"
+    else
+        echo -e "${RED}backfill-images.sh not found in $OPT_DIR${NC}"
+    fi
+}
 
 # Main loop
 main() {
@@ -852,13 +903,15 @@ main() {
             16) verify_against_steam ;;
             17) force_retry_failed ;;
             18) requeue_archived_items ;;
-            19) clear_failed_downloads ;;
-            20) clear_depot_cache ;;
-            21) clear_temp_files ;;
-            22) full_reset ;;
-            23) update_binary ;;
-            24) edit_config ;;
-            25) backup_database ;;
+            19) rebuild_manifest ;;
+            20) backfill_images ;;
+            21) clear_failed_downloads ;;
+            22) clear_depot_cache ;;
+            23) clear_temp_files ;;
+            24) full_reset ;;
+            25) update_binary ;;
+            26) edit_config ;;
+            27) backup_database ;;
             r|R) continue ;;
             0) echo "Goodbye!"; exit 0 ;;
             *) echo -e "${RED}Invalid option${NC}" ;;

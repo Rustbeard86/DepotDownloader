@@ -1,5 +1,6 @@
 using DepotDownloader.Lib;
 using GitHubArchiver.Daemon;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -8,12 +9,19 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    // Check for setup mode
+    // Check for special modes
     var isSetup = args.Contains("--setup");
+    var isRebuildManifest = args.Contains("--rebuild-manifest");
 
     if (isSetup)
     {
         await RunSetupModeAsync(args);
+        return 0;
+    }
+
+    if (isRebuildManifest)
+    {
+        await RunRebuildManifestAsync();
         return 0;
     }
 
@@ -153,6 +161,52 @@ static async Task RunSetupModeAsync(string[] args)
     {
         Console.WriteLine();
         Console.WriteLine("Login failed. Please check your credentials and try again.");
+    }
+}
+
+static async Task RunRebuildManifestAsync()
+{
+    Console.WriteLine("=== GitHub Archiver - Rebuild Manifest ===");
+    Console.WriteLine("This will rebuild the manifest from GitHub releases and Steam metadata.");
+    Console.WriteLine();
+
+    // Load configuration
+    var configBuilder = new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile("appsettings.json", false);
+
+    if (OperatingSystem.IsWindows())
+        configBuilder.AddJsonFile("appsettings.windows.json", true);
+
+    var config = configBuilder
+        .AddEnvironmentVariables()
+        .Build();
+
+    var gitHubOptions = new GitHubOptions();
+    config.GetSection(GitHubOptions.SectionName).Bind(gitHubOptions);
+
+    using var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+    var logger = loggerFactory.CreateLogger<GitHubArchiveService>();
+    var metaLogger = loggerFactory.CreateLogger<SteamMetadataService>();
+
+    var steamMetadataService = new SteamMetadataService(metaLogger);
+    var archiveService = new GitHubArchiveService(
+        Options.Create(gitHubOptions),
+        steamMetadataService,
+        logger);
+
+    Console.WriteLine("Starting manifest rebuild...");
+    Console.WriteLine();
+
+    try
+    {
+        var count = await archiveService.RebuildManifestAsync();
+        Console.WriteLine();
+        Console.WriteLine($"Manifest rebuilt successfully with {count} entries.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error rebuilding manifest: {ex.Message}");
     }
 }
 
