@@ -1,0 +1,24 @@
+[Unit]
+Description=GitHub Archiver Daemon - Archives Steam Workshop content to GitHub
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/opt/github-archiver/GitHubArchiver.Daemon
+WorkingDirectory=/opt/github-archiver
+Restart=always
+RestartSec=30
+User=workshop-archiver
+Group=workshop
+
+# Set HOME for IsolatedStorage (used by DepotDownloader for credentials)
+Environment=HOME=/var/lib/github-archiver
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ReadWritePaths=/var/lib/github-archiver /opt/github-archiver
+
+[Install]
+WantedBy=multi-user.target

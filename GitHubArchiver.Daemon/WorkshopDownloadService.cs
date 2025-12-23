@@ -111,16 +111,9 @@ public sealed class WorkshopDownloadService : IDisposable
             throw new InvalidOperationException("Not logged in");
 
         var options = _optionsMonitor.CurrentValue;
-        var downloadDir = Path.Combine(options.DownloadPath, item.PublishedFileId.ToString());
 
         try
         {
-            // Clean up any existing download directory
-            if (Directory.Exists(downloadDir))
-                Directory.Delete(downloadDir, true);
-
-            Directory.CreateDirectory(downloadDir);
-
             _logger.LogInformation("Downloading workshop item {Id} ({Title})", item.PublishedFileId, item.Title);
 
             // Download the workshop item
@@ -159,15 +152,30 @@ public sealed class WorkshopDownloadService : IDisposable
                 // Mark as archived in database
                 await _tracker.MarkArchivedAsync(item.PublishedFileId, item.TimeUpdated, ct);
 
-            // Clean up the downloaded content
+            // Clean up the downloaded content from depots folder
             try
             {
-                Directory.Delete(contentDir, true);
+                if (Directory.Exists(contentDir))
+                {
+                    Directory.Delete(contentDir, true);
+                    _logger.LogDebug("Cleaned up content directory: {ContentDir}", contentDir);
+                }
+
                 // Clean up empty parent depot directory if possible
                 var parentDir = Path.GetDirectoryName(contentDir);
                 if (parentDir != null && Directory.Exists(parentDir) &&
                     !Directory.EnumerateFileSystemEntries(parentDir).Any())
+                {
                     Directory.Delete(parentDir);
+                    _logger.LogDebug("Cleaned up empty depot directory: {ParentDir}", parentDir);
+                }
+
+                // Clean up entire depots folder if empty
+                if (Directory.Exists(depotsDir) && !Directory.EnumerateFileSystemEntries(depotsDir).Any())
+                {
+                    Directory.Delete(depotsDir);
+                    _logger.LogDebug("Cleaned up empty depots directory");
+                }
             }
             catch (Exception ex)
             {
@@ -182,18 +190,6 @@ public sealed class WorkshopDownloadService : IDisposable
         {
             _logger.LogError(ex, "Failed to download/archive workshop item {Id}", item.PublishedFileId);
             await _tracker.RecordFailureAsync(item.PublishedFileId, item.AppId, ex.Message, ct);
-
-            // Clean up on failure
-            try
-            {
-                if (Directory.Exists(downloadDir))
-                    Directory.Delete(downloadDir, true);
-            }
-            catch
-            {
-                /* ignore cleanup errors */
-            }
-
             return false;
         }
     }

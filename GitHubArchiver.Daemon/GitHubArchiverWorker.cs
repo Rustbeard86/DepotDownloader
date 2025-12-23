@@ -9,6 +9,7 @@ namespace GitHubArchiver.Daemon;
 /// </summary>
 public sealed class GitHubArchiverWorker : BackgroundService
 {
+    private readonly IGitHubArchiveService _archiveService;
     private readonly WorkshopDownloadService _downloadService;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<GitHubArchiverWorker> _logger;
@@ -16,17 +17,20 @@ public sealed class GitHubArchiverWorker : BackgroundService
     private readonly IWorkshopTracker _tracker;
 
     private uint _currentAppId;
+    private bool _isProcessingItem;
 
     public GitHubArchiverWorker(
         IOptionsMonitor<WorkshopOptions> optionsMonitor,
         IWorkshopTracker tracker,
         WorkshopDownloadService downloadService,
+        IGitHubArchiveService archiveService,
         IHostApplicationLifetime lifetime,
         ILogger<GitHubArchiverWorker> logger)
     {
         _optionsMonitor = optionsMonitor;
         _tracker = tracker;
         _downloadService = downloadService;
+        _archiveService = archiveService;
         _lifetime = lifetime;
         _logger = logger;
     }
@@ -95,6 +99,17 @@ public sealed class GitHubArchiverWorker : BackgroundService
         }
         finally
         {
+            // Always try to flush manifest on shutdown
+            try
+            {
+                _logger.LogInformation("Flushing manifest before shutdown...");
+                await _archiveService.FlushManifestAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to flush manifest on shutdown");
+            }
+
             _downloadService.Logout();
         }
     }
@@ -183,23 +198,54 @@ public sealed class GitHubArchiverWorker : BackgroundService
 
             foreach (var item in itemsToArchive)
             {
+                // Check for cancellation before starting a new item
                 if (ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning("Shutdown requested, stopping archive pass with {Remaining} items remaining",
+                        itemsToArchive.Count - successCount - failCount);
                     break;
+                }
 
-                var success = await _downloadService.DownloadAndArchiveItemAsync(item, ct);
+                _isProcessingItem = true;
+                try
+                {
+                    var success = await _downloadService.DownloadAndArchiveItemAsync(item, ct);
 
-                if (success)
-                    successCount++;
-                else
-                    failCount++;
+                    if (success)
+                        successCount++;
+                    else
+                        failCount++;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning("Item {Id} was interrupted by shutdown", item.PublishedFileId);
+                    break;
+                }
+                finally
+                {
+                    _isProcessingItem = false;
+                }
 
-                // Rate limit
+                // Rate limit between items
                 if (!ct.IsCancellationRequested)
                     await Task.Delay(delay, ct);
             }
 
+            // Always flush manifest at end of pass if there were successes
+            if (successCount > 0)
+            {
+                _logger.LogInformation("Flushing manifest after archive pass...");
+                await _archiveService.FlushManifestAsync();
+            }
+
             _logger.LogInformation("Archive pass complete: {Success} succeeded, {Failed} failed",
                 successCount, failCount);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _logger.LogInformation("Archive pass interrupted by shutdown");
+            // Try to flush what we have
+            await _archiveService.FlushManifestAsync();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -223,6 +269,7 @@ public sealed class GitHubArchiverWorker : BackgroundService
         var itemLookup = workshopItems.ToDictionary(i => i.PublishedFileId);
 
         var delay = TimeSpan.FromSeconds(options.DelayBetweenDownloadsSeconds);
+        var successCount = 0;
 
         foreach (var failure in failures)
         {
@@ -240,10 +287,32 @@ public sealed class GitHubArchiverWorker : BackgroundService
             _logger.LogInformation("Retry attempt {Attempt} for {Id} ({Title})",
                 failure.Attempts + 1, item.PublishedFileId, item.Title);
 
-            await _downloadService.DownloadAndArchiveItemAsync(item, ct);
+            _isProcessingItem = true;
+            try
+            {
+                var success = await _downloadService.DownloadAndArchiveItemAsync(item, ct);
+                if (success)
+                    successCount++;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                _logger.LogWarning("Retry for {Id} was interrupted by shutdown", item.PublishedFileId);
+                break;
+            }
+            finally
+            {
+                _isProcessingItem = false;
+            }
 
             if (!ct.IsCancellationRequested)
                 await Task.Delay(delay, ct);
+        }
+
+        // Flush manifest after retries if any succeeded
+        if (successCount > 0)
+        {
+            _logger.LogInformation("Flushing manifest after {Count} successful retries...", successCount);
+            await _archiveService.FlushManifestAsync();
         }
     }
 }

@@ -1,0 +1,34 @@
+var request = UnityWebRequest.Get("https://es2.rustbeard.com/workshopcontent.json");
+request.SetRequestHeader("X-ES2-Key", "es2-rustbeard-2024");
+
+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
+
+
+/opt/github-archiver/daemon-manager.sh
+# or
+github-archiver-manager
+
+Features:
+Service Control:
+•	Start/Stop/Restart service
+•	Enable/Disable auto-start on boot
+Logs & Monitoring:
+•	Live log viewing
+•	View last 100 entries
+•	View errors only
+•	View today's logs
+Database:
+•	Show recently archived items
+•	Show pending items
+•	Show failed downloads
+•	Search items by name
+•	Export manifest to JSON
+Reset & Cleanup:
+•	Clear failed downloads
+•	Clear depot cache
+•	Clear temp files
+•	Full reset (deletes everything)
+Deployment:
+•	Update binary from local path or SCP
+•	Edit configuration
+•	Backup database
