@@ -7,15 +7,11 @@ namespace GitHubArchiver.Daemon;
 
 /// <summary>
 ///     Implementation of <see cref="IGitHubArchiveService" /> using GitHub API via Octokit.
-///     Handles zipping content, uploading to GitHub, and updating the workshopcontent.json manifest.
-///     Files under 100MB use the Contents API, larger files use Releases.
+///     Handles zipping content, uploading to GitHub Releases, and updating the workshopcontent.json manifest.
+///     Each workshop item gets its own release, making updates simple (just replace the asset).
 /// </summary>
 public sealed class GitHubArchiveService : IGitHubArchiveService
 {
-    private const long MaxContentApiSize = 100 * 1024 * 1024; // 100 MB limit for Contents API
-    private const string LargeFilesReleaseName = "workshop-content";
-    private const string LargeFilesReleaseTag = "workshop-content";
-
     // Files and folders created by DepotDownloader that should not be archived
     private static readonly HashSet<string> ExcludedNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -29,12 +25,9 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
     private readonly ISteamMetadataService _steamMetadataService;
 
     // In-memory manifest cache to avoid constant GitHub API calls
-    private List<RemoteRoomMeta> _manifestCache;
-    private string _manifestSha;
+    private List<RemoteRoomMeta>? _manifestCache;
+    private string? _manifestSha;
     private int _pendingManifestEntries;
-
-    // Cached release for large files
-    private Release _largeFilesRelease;
 
     public GitHubArchiveService(
         IOptions<GitHubOptions> gitHubOptions,
@@ -53,11 +46,11 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
             Credentials = new Credentials(_gitHubOptions.Token)
         };
 
-        // Set longer timeout for large file uploads (default is 100 seconds)
+        // Set longer timeout for large file uploads
         _gitHubClient.SetRequestTimeout(TimeSpan.FromMinutes(30));
     }
 
-    public async Task<bool> ArchiveAndPushAsync(string workshopId, string contentFolderPath,
+    public async Task<ArchiveResult> ArchiveAndPushAsync(string workshopId, string contentFolderPath,
         CancellationToken ct = default)
     {
         _logger.LogInformation("Processing Workshop ID: {WorkshopId}...", workshopId);
@@ -65,7 +58,7 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
         if (string.IsNullOrEmpty(_gitHubOptions.ProxyUrl))
         {
             _logger.LogError("GitHub:ProxyUrl is not configured in appsettings.json.");
-            return false;
+            return ArchiveResult.ConfigurationError;
         }
 
         try
@@ -77,19 +70,27 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
                 _logger.LogDebug("Repository {Owner}/{Repo} is accessible", _gitHubOptions.Owner,
                     _gitHubOptions.Repository);
             }
+            catch (AuthorizationException ex)
+            {
+                _logger.LogError(ex, "GitHub authentication failed - token may be invalid or expired");
+                return ArchiveResult.AuthenticationFailure;
+            }
             catch (NotFoundException)
             {
                 _logger.LogError("Repository {Owner}/{Repo} not found. Please create it on GitHub first.",
                     _gitHubOptions.Owner, _gitHubOptions.Repository);
-                return false;
+                return ArchiveResult.ConfigurationError;
             }
+
+            // Ensure repo is not empty (required for releases)
+            await EnsureRepoInitializedAsync();
 
             // Fetch official metadata from Steam
             var steamMeta = await _steamMetadataService.GetMetadataAsync(workshopId, ct);
             if (steamMeta is null)
             {
                 _logger.LogError("Failed to fetch Steam metadata for {WorkshopId}", workshopId);
-                return false;
+                return ArchiveResult.ContentError;
             }
 
             // Create ZIP archive in temp folder
@@ -102,7 +103,7 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
             if (!Directory.Exists(contentFolderPath))
             {
                 _logger.LogError("Content folder does not exist: {ContentPath}", contentFolderPath);
-                return false;
+                return ArchiveResult.ContentError;
             }
 
             // Create ZIP excluding DepotDownloader files
@@ -112,7 +113,7 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
             if (filesAdded == 0)
             {
                 _logger.LogError("No content files found to archive for {WorkshopId}", workshopId);
-                return false;
+                return ArchiveResult.ContentError;
             }
 
             var zipInfo = new FileInfo(tempZipPath);
@@ -121,29 +122,16 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
 
             string downloadUrl;
 
-            if (zipInfo.Length >= MaxContentApiSize)
+            try
             {
-                // Large file - use Releases
-                _logger.LogInformation("Large file ({SizeMB:F0} MB) - uploading as release asset...", sizeMB);
-                downloadUrl = await UploadAsReleaseAssetAsync(workshopId, tempZipPath, ct);
+                // Upload as release asset - each workshop item gets its own release
+                downloadUrl = await UploadAsReleaseAsync(workshopId, steamMeta.Title, tempZipPath, ct);
             }
-            else
+            catch (AuthorizationException ex)
             {
-                // Small file - use Contents API
-                var zipBytes = await File.ReadAllBytesAsync(tempZipPath, ct);
-                var targetRepoPath = $"maps/{workshopId}.zip";
-
-                _logger.LogInformation("Uploading to GitHub: {Owner}/{Repo}/{Path} ({SizeMB:F2} MB)...",
-                    _gitHubOptions.Owner, _gitHubOptions.Repository, targetRepoPath, sizeMB);
-
-                var uploadStart = DateTime.UtcNow;
-                await CreateOrUpdateBinaryFileAsync(targetRepoPath, zipBytes, $"Add/Update map {workshopId}");
-                var uploadDuration = DateTime.UtcNow - uploadStart;
-
-                _logger.LogInformation("Uploaded ZIP to {TargetPath} in {Duration:F1} seconds",
-                    targetRepoPath, uploadDuration.TotalSeconds);
-
-                downloadUrl = $"{_gitHubOptions.ProxyUrl.TrimEnd('/')}/maps/{workshopId}.zip";
+                _logger.LogError(ex, "GitHub authentication failed during upload - token may be invalid or expired");
+                try { File.Delete(tempZipPath); } catch { /* ignore */ }
+                return ArchiveResult.AuthenticationFailure;
             }
 
             // Add entry to manifest cache
@@ -169,7 +157,12 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
             File.Delete(tempZipPath);
 
             _logger.LogInformation("Successfully archived {WorkshopId}!", workshopId);
-            return true;
+            return ArchiveResult.Success;
+        }
+        catch (AuthorizationException ex)
+        {
+            _logger.LogError(ex, "GitHub authentication failed for {WorkshopId}", workshopId);
+            return ArchiveResult.AuthenticationFailure;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -179,32 +172,56 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Automation failed for {WorkshopId}", workshopId);
-            return false;
+            return ArchiveResult.TransientFailure;
         }
     }
 
     /// <summary>
-    ///     Uploads a large file as a GitHub Release asset.
+    ///     Uploads a file as a GitHub Release asset.
+    ///     Each workshop item gets its own release (tag = workshop ID).
+    ///     Updates are handled by deleting the old asset and uploading a new one.
     /// </summary>
-    private async Task<string> UploadAsReleaseAssetAsync(string workshopId, string filePath, CancellationToken ct)
+    private async Task<string> UploadAsReleaseAsync(string workshopId, string title, string filePath, CancellationToken ct)
     {
         var owner = _gitHubOptions.Owner;
         var repo = _gitHubOptions.Repository;
+        var tag = workshopId;
         var assetName = $"{workshopId}.zip";
 
-        // Get or create the release for large files
-        var release = await GetOrCreateLargeFilesReleaseAsync();
+        Release release;
 
-        // Check if asset already exists and delete it
-        var existingAsset = release.Assets.FirstOrDefault(a => a.Name == assetName);
-        if (existingAsset is not null)
+        // Try to get existing release, or create a new one
+        try
         {
-            _logger.LogDebug("Deleting existing release asset {AssetName}", assetName);
-            await _gitHubClient.Repository.Release.DeleteAsset(owner, repo, existingAsset.Id);
+            release = await _gitHubClient.Repository.Release.Get(owner, repo, tag);
+            _logger.LogDebug("Found existing release for {WorkshopId}", workshopId);
+
+            // Delete existing asset if present (for updates)
+            var existingAsset = release.Assets.FirstOrDefault(a => a.Name == assetName);
+            if (existingAsset is not null)
+            {
+                _logger.LogDebug("Deleting existing asset for update");
+                await _gitHubClient.Repository.Release.DeleteAsset(owner, repo, existingAsset.Id);
+            }
+        }
+        catch (NotFoundException)
+        {
+            _logger.LogDebug("Creating new release for {WorkshopId}", workshopId);
+
+            var newRelease = new NewRelease(tag)
+            {
+                Name = workshopId,
+                Body = workshopId,
+                Draft = false,
+                Prerelease = false
+            };
+
+            release = await _gitHubClient.Repository.Release.Create(owner, repo, newRelease);
         }
 
-        // Upload the new asset
+        // Upload the asset
         await using var stream = File.OpenRead(filePath);
+        var fileInfo = new FileInfo(filePath);
         var uploadStart = DateTime.UtcNow;
 
         var assetUpload = new ReleaseAssetUpload
@@ -214,65 +231,28 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
             RawData = stream
         };
 
-        _logger.LogDebug("Uploading release asset {AssetName}...", assetName);
-        var asset = await _gitHubClient.Repository.Release.UploadAsset(release, assetUpload, ct);
+        _logger.LogInformation("Uploading {AssetName} ({SizeMB:F2} MB) to release...", 
+            assetName, fileInfo.Length / 1024.0 / 1024.0);
+        
+        await _gitHubClient.Repository.Release.UploadAsset(release, assetUpload, ct);
 
         var uploadDuration = DateTime.UtcNow - uploadStart;
-        _logger.LogInformation("Uploaded release asset {AssetName} in {Duration:F1} seconds",
+        _logger.LogInformation("Uploaded {AssetName} in {Duration:F1} seconds",
             assetName, uploadDuration.TotalSeconds);
 
-        // Refresh the cached release to include the new asset
-        _largeFilesRelease = await _gitHubClient.Repository.Release.Get(owner, repo, release.Id);
-
         // Return the proxy URL for the release asset
-        // Format: /releases/{assetName} - the Cloudflare worker will need to handle this
-        return $"{_gitHubOptions.ProxyUrl.TrimEnd('/')}/releases/{assetName}";
-    }
-
-    /// <summary>
-    ///     Gets or creates the release used for storing large files.
-    /// </summary>
-    private async Task<Release> GetOrCreateLargeFilesReleaseAsync()
-    {
-        if (_largeFilesRelease is not null)
-            return _largeFilesRelease;
-
-        var owner = _gitHubOptions.Owner;
-        var repo = _gitHubOptions.Repository;
-
-        try
-        {
-            _largeFilesRelease = await _gitHubClient.Repository.Release.Get(owner, repo, LargeFilesReleaseTag);
-            _logger.LogDebug("Found existing release: {ReleaseName}", _largeFilesRelease.Name);
-        }
-        catch (NotFoundException)
-        {
-            _logger.LogInformation("Creating release for large files: {ReleaseName}", LargeFilesReleaseName);
-
-            var newRelease = new NewRelease(LargeFilesReleaseTag)
-            {
-                Name = LargeFilesReleaseName,
-                Body = "Workshop content files that exceed GitHub's 100MB file size limit.",
-                Draft = false,
-                Prerelease = false
-            };
-
-            _largeFilesRelease = await _gitHubClient.Repository.Release.Create(owner, repo, newRelease);
-        }
-
-        return _largeFilesRelease;
+        return $"{_gitHubOptions.ProxyUrl.TrimEnd('/')}/releases/{workshopId}/{assetName}";
     }
 
     /// <summary>
     ///     Flushes the manifest cache to GitHub if there are pending changes.
-    ///     Call this after processing a batch of items.
     /// </summary>
-    public async Task FlushManifestAsync()
+    public async Task<bool> FlushManifestAsync()
     {
         if (_pendingManifestEntries == 0 || _manifestCache is null)
         {
             _logger.LogDebug("Manifest cache is clean, nothing to flush");
-            return;
+            return true;
         }
 
         var owner = _gitHubOptions.Owner;
@@ -303,11 +283,12 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
 
             _logger.LogInformation("Manifest flushed to GitHub with {Count} entries.", sortedList.Count);
             _pendingManifestEntries = 0;
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to flush manifest to GitHub");
-            // Don't reset pending count - we'll try again next time
+            return false;
         }
     }
 
@@ -353,7 +334,7 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
     {
         await EnsureManifestLoadedAsync();
 
-        var existingIndex = _manifestCache.FindIndex(x => x.Id == entry.Id);
+        var existingIndex = _manifestCache!.FindIndex(x => x.Id == entry.Id);
         if (existingIndex >= 0)
             _manifestCache[existingIndex] = entry;
         else
@@ -363,6 +344,37 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
 
         _logger.LogDebug("Added {Id} to manifest cache (now {Count} entries, {Pending} pending flush)",
             entry.Id, _manifestCache.Count, _pendingManifestEntries);
+    }
+
+    /// <summary>
+    ///     Ensures the repository has at least one commit (required for creating releases).
+    ///     Creates an initial README.md if the repo is empty.
+    /// </summary>
+    private async Task EnsureRepoInitializedAsync()
+    {
+        var owner = _gitHubOptions.Owner;
+        var repo = _gitHubOptions.Repository;
+        var branch = _gitHubOptions.Branch;
+
+        try
+        {
+            // Try to get README.md from the repo - if it exists, repo is initialized
+            await _gitHubClient.Repository.Content.GetAllContentsByRef(owner, repo, "README.md", branch);
+            _logger.LogDebug("Repository has content, no initialization needed");
+        }
+        catch (NotFoundException)
+        {
+            // Repo is empty or README doesn't exist, create initial commit
+            _logger.LogInformation("Repository is empty, creating initial commit...");
+
+            var readme = "# Workshop Content Archive\n\nThis repository contains archived Steam Workshop content.";
+            
+            await _gitHubClient.Repository.Content.CreateFile(
+                owner, repo, "README.md",
+                new CreateFileRequest("Initial commit", readme, branch));
+
+            _logger.LogInformation("Created initial README.md");
+        }
     }
 
     /// <summary>
@@ -379,16 +391,13 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
 
         foreach (var file in sourceDir.EnumerateFiles("*", SearchOption.AllDirectories))
         {
-            // Skip files in excluded directories
             if (IsExcluded(file.FullName, basePath))
             {
                 _logger.LogDebug("Excluding file: {File}", file.FullName);
                 continue;
             }
 
-            // Get relative path for the archive
             var relativePath = Path.GetRelativePath(basePath, file.FullName);
-
             archive.CreateEntryFromFile(file.FullName, relativePath, CompressionLevel.Optimal);
             filesAdded++;
         }
@@ -409,42 +418,5 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
                 return true;
 
         return false;
-    }
-
-    /// <summary>
-    ///     Creates or updates a binary file (e.g., ZIP) in the repository.
-    /// </summary>
-    private async Task CreateOrUpdateBinaryFileAsync(string path, byte[] content, string message)
-    {
-        var owner = _gitHubOptions.Owner;
-        var repo = _gitHubOptions.Repository;
-        var branch = _gitHubOptions.Branch;
-
-        string? sha = null;
-        try
-        {
-            var existingFiles = await _gitHubClient.Repository.Content.GetAllContentsByRef(owner, repo, path, branch);
-            if (existingFiles.Count > 0) sha = existingFiles[0].Sha;
-        }
-        catch (NotFoundException)
-        {
-            // File doesn't exist, we'll create it
-        }
-
-        var base64Content = Convert.ToBase64String(content);
-        _logger.LogDebug("Uploading {Bytes} bytes as {Base64Len} base64 chars", content.Length, base64Content.Length);
-
-        if (sha is null)
-        {
-            // Create new file - convertContentToBase64: false because we're already providing base64
-            var request = new CreateFileRequest(message, base64Content, branch, false);
-            await _gitHubClient.Repository.Content.CreateFile(owner, repo, path, request);
-        }
-        else
-        {
-            // Update existing file
-            var request = new UpdateFileRequest(message, base64Content, sha, branch, false);
-            await _gitHubClient.Repository.Content.UpdateFile(owner, repo, path, request);
-        }
     }
 }

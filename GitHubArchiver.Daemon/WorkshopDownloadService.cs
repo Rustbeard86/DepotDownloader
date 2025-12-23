@@ -104,13 +104,12 @@ public sealed class WorkshopDownloadService : IDisposable
 
     /// <summary>
     ///     Downloads a workshop item and archives it to GitHub.
+    ///     Returns the archive result indicating success or failure type.
     /// </summary>
-    public async Task<bool> DownloadAndArchiveItemAsync(WorkshopItemInfo item, CancellationToken ct = default)
+    public async Task<ArchiveResult> DownloadAndArchiveItemAsync(WorkshopItemInfo item, CancellationToken ct = default)
     {
         if (_client is null)
             throw new InvalidOperationException("Not logged in");
-
-        var options = _optionsMonitor.CurrentValue;
 
         try
         {
@@ -124,7 +123,8 @@ public sealed class WorkshopDownloadService : IDisposable
             if (!Directory.Exists(depotsDir))
             {
                 _logger.LogError("Download directory not found after download");
-                return false;
+                await _tracker.RecordFailureAsync(item.PublishedFileId, item.AppId, "Download directory not found", ct);
+                return ArchiveResult.ContentError;
             }
 
             // Find the most recently modified depot directory (our download)
@@ -136,21 +136,38 @@ public sealed class WorkshopDownloadService : IDisposable
             if (depotDirs.Count == 0)
             {
                 _logger.LogError("No depot content found after download");
-                return false;
+                await _tracker.RecordFailureAsync(item.PublishedFileId, item.AppId, "No depot content found", ct);
+                return ArchiveResult.ContentError;
             }
 
             var contentDir = depotDirs[0];
             _logger.LogDebug("Found content at {ContentDir}", contentDir);
 
             // Archive to GitHub (zip and upload)
-            var success = await _archiveService.ArchiveAndPushAsync(
+            var result = await _archiveService.ArchiveAndPushAsync(
                 item.PublishedFileId.ToString(),
                 contentDir,
                 ct);
 
-            if (success)
+            if (result == ArchiveResult.Success)
+            {
                 // Mark as archived in database
                 await _tracker.MarkArchivedAsync(item.PublishedFileId, item.TimeUpdated, ct);
+                _logger.LogInformation("Successfully archived {Id} to GitHub", item.PublishedFileId);
+            }
+            else
+            {
+                // Record the failure with appropriate message
+                var errorMessage = result switch
+                {
+                    ArchiveResult.AuthenticationFailure => "GitHub authentication failed - token invalid or expired",
+                    ArchiveResult.ConfigurationError => "GitHub configuration error",
+                    ArchiveResult.ContentError => "Content or metadata error",
+                    ArchiveResult.TransientFailure => "Transient upload failure",
+                    _ => "Unknown upload failure"
+                };
+                await _tracker.RecordFailureAsync(item.PublishedFileId, item.AppId, errorMessage, ct);
+            }
 
             // Clean up the downloaded content from depots folder
             try
@@ -182,15 +199,13 @@ public sealed class WorkshopDownloadService : IDisposable
                 _logger.LogWarning(ex, "Failed to clean up download directory");
             }
 
-            if (success) _logger.LogInformation("Successfully archived {Id} to GitHub", item.PublishedFileId);
-
-            return success;
+            return result;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to download/archive workshop item {Id}", item.PublishedFileId);
             await _tracker.RecordFailureAsync(item.PublishedFileId, item.AppId, ex.Message, ct);
-            return false;
+            return ArchiveResult.TransientFailure;
         }
     }
 }

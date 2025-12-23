@@ -22,6 +22,15 @@ DATA_DIR="/var/lib/github-archiver"
 OPT_DIR="/opt/github-archiver"
 DB_FILE="$DATA_DIR/workshop.db"
 
+# GitHub config (read from appsettings.json)
+get_github_config() {
+    if [ -f "$OPT_DIR/appsettings.json" ]; then
+        GITHUB_TOKEN=$(grep -o '"Token":[^,]*' "$OPT_DIR/appsettings.json" | head -1 | sed 's/.*"\([^"]*\)".*/\1/' | tail -1)
+        GITHUB_OWNER=$(grep -o '"Owner":[^,]*' "$OPT_DIR/appsettings.json" | head -1 | sed 's/.*"\([^"]*\)".*/\1/' | tail -1)
+        GITHUB_REPO=$(grep -o '"Repository":[^,]*' "$OPT_DIR/appsettings.json" | head -1 | sed 's/.*"\([^"]*\)".*/\1/' | tail -1)
+    fi
+}
+
 print_header() {
     echo -e "${CYAN}"
     echo "+================================================================+"
@@ -126,16 +135,22 @@ print_menu() {
     echo "   13) Search items by name"
     echo "   14) Export manifest to file"
     echo ""
+    echo "  Verification & Sync:"
+    echo "   15) Verify GitHub releases vs database"
+    echo "   16) Verify against Steam Workshop (sample check)"
+    echo "   17) Force retry failed items now"
+    echo "   18) Re-queue archived items for re-upload"
+    echo ""
     echo "  Reset & Cleanup:"
-    echo "   15) Clear failed downloads"
-    echo "   16) Clear depot cache"
-    echo "   17) Clear temp files"
-    echo "   18) Full reset (WARNING: deletes all data)"
+    echo "   19) Clear failed downloads"
+    echo "   20) Clear depot cache"
+    echo "   21) Clear temp files"
+    echo "   22) Full reset (WARNING: deletes all data)"
     echo ""
     echo "  Deployment:"
-    echo "   19) Update binary from local build"
-    echo "   20) Edit configuration"
-    echo "   21) Backup database"
+    echo "   23) Update binary from local build"
+    echo "   24) Edit configuration"
+    echo "   25) Backup database"
     echo ""
     echo "  Other:"
     echo "   r) Refresh status"
@@ -316,6 +331,295 @@ export_manifest() {
     echo -e "Items exported: $(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM WorkshopItems WHERE ArchivedAt IS NOT NULL;")"
 }
 
+verify_github_releases() {
+    get_github_config
+    
+    if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_OWNER" ] || [ -z "$GITHUB_REPO" ]; then
+        echo -e "${RED}Could not read GitHub config from appsettings.json${NC}"
+        return
+    fi
+    
+    if [ ! -f "$DB_FILE" ]; then
+        echo -e "${YELLOW}No database found.${NC}"
+        return
+    fi
+    
+    echo -e "${CYAN}Verifying GitHub releases vs database...${NC}"
+    echo ""
+    
+    # Get archived items from database
+    local db_archived=$(sqlite3 "$DB_FILE" "SELECT PublishedFileId FROM WorkshopItems WHERE ArchivedAt IS NOT NULL ORDER BY PublishedFileId;")
+    local db_count=$(echo "$db_archived" | grep -c . || echo "0")
+    echo -e "Database shows ${GREEN}${db_count}${NC} archived items"
+    
+    # Get releases from GitHub (paginated)
+    echo -e "Fetching releases from GitHub..."
+    local github_releases=""
+    local page=1
+    while true; do
+        local response=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases?per_page=100&page=$page")
+        
+        local count=$(echo "$response" | grep -o '"tag_name"' | wc -l)
+        if [ "$count" -eq 0 ]; then
+            break
+        fi
+        
+        local tags=$(echo "$response" | grep -o '"tag_name": *"[^"]*"' | sed 's/.*"\([^"]*\)"/\1/')
+        github_releases="$github_releases $tags"
+        
+        if [ "$count" -lt 100 ]; then
+            break
+        fi
+        page=$((page + 1))
+    done
+    
+    local github_count=$(echo "$github_releases" | wc -w)
+    echo -e "GitHub has ${GREEN}${github_count}${NC} releases"
+    echo ""
+    
+    # Find items in DB but not on GitHub
+    local missing_on_github=0
+    local missing_ids=""
+    echo -e "${CYAN}Checking for missing releases on GitHub...${NC}"
+    for id in $db_archived; do
+        if ! echo "$github_releases" | grep -q -w "$id"; then
+            echo -e "  ${RED}Missing:${NC} $id"
+            missing_on_github=$((missing_on_github + 1))
+            missing_ids="$missing_ids $id"
+        fi
+    done
+    
+    if [ "$missing_on_github" -eq 0 ]; then
+        echo -e "  ${GREEN}All archived items have releases on GitHub!${NC}"
+    else
+        echo ""
+        echo -e "${RED}Found $missing_on_github items in database marked as archived but missing on GitHub${NC}"
+        echo ""
+        if confirm "Would you like to re-queue these items for upload?"; then
+            for id in $missing_ids; do
+                sqlite3 "$DB_FILE" "UPDATE WorkshopItems SET ArchivedAt = NULL, ArchivedTimeUpdated = NULL WHERE PublishedFileId = $id;"
+                echo -e "  Re-queued: $id"
+            done
+            echo -e "${GREEN}Items re-queued. Restart service to process them.${NC}"
+        fi
+    fi
+    
+    echo ""
+    
+    # Find releases on GitHub but not in DB (orphaned releases)
+    echo -e "${CYAN}Checking for orphaned releases on GitHub...${NC}"
+    local orphaned=0
+    for tag in $github_releases; do
+        # Skip non-numeric tags (like README)
+        if ! [[ "$tag" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        if ! echo "$db_archived" | grep -q -w "$tag"; then
+            local in_db=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM WorkshopItems WHERE PublishedFileId = $tag;")
+            if [ "$in_db" -eq 0 ]; then
+                echo -e "  ${YELLOW}Orphaned (not in DB):${NC} $tag"
+            else
+                echo -e "  ${YELLOW}Not marked archived:${NC} $tag"
+            fi
+            orphaned=$((orphaned + 1))
+        fi
+    done
+    
+    if [ "$orphaned" -eq 0 ]; then
+        echo -e "  ${GREEN}No orphaned releases found!${NC}"
+    else
+        echo -e "${YELLOW}Found $orphaned releases on GitHub not properly tracked in database${NC}"
+    fi
+}
+
+verify_against_steam() {
+    if [ ! -f "$DB_FILE" ]; then
+        echo -e "${YELLOW}No database found.${NC}"
+        return
+    fi
+    
+    # Get AppId from config
+    local app_id=$(grep -o '"AppId":[^,]*' "$OPT_DIR/appsettings.json" | head -1 | grep -o '[0-9]*')
+    if [ -z "$app_id" ]; then
+        echo -e "${RED}Could not read AppId from appsettings.json${NC}"
+        return
+    fi
+    
+    echo -e "${CYAN}Comparing database with Steam Workshop for AppId $app_id...${NC}"
+    echo -e "${YELLOW}Note: This queries Steam API which may be slow${NC}"
+    echo ""
+    
+    # Get counts from database
+    local db_total=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM WorkshopItems;")
+    local db_archived=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM WorkshopItems WHERE ArchivedAt IS NOT NULL;")
+    local db_pending=$((db_total - db_archived))
+    
+    echo -e "Database: ${db_total} total items (${GREEN}${db_archived}${NC} archived, ${YELLOW}${db_pending}${NC} pending)"
+    echo ""
+    
+    # Check for items in DB that might be deleted from Workshop
+    echo -e "${CYAN}Checking for deleted Workshop items...${NC}"
+    local deleted_count=0
+    
+    # Get sample of archived items to check (checking all would take too long)
+    local sample_ids=$(sqlite3 "$DB_FILE" "SELECT PublishedFileId FROM WorkshopItems WHERE ArchivedAt IS NOT NULL ORDER BY RANDOM() LIMIT 10;")
+    
+    for id in $sample_ids; do
+        # Query Steam API for this item
+        local response=$(curl -s "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/" \
+            -d "itemcount=1" -d "publishedfileids[0]=$id" 2>/dev/null)
+        
+        local result=$(echo "$response" | grep -o '"result":[0-9]*' | head -1 | grep -o '[0-9]*')
+        
+        if [ "$result" != "1" ]; then
+            local title=$(sqlite3 "$DB_FILE" "SELECT Title FROM WorkshopItems WHERE PublishedFileId = $id;")
+            echo -e "  ${RED}Possibly deleted:${NC} $id ($title)"
+            deleted_count=$((deleted_count + 1))
+        fi
+        
+        sleep 0.5  # Rate limit
+    done
+    
+    if [ "$deleted_count" -eq 0 ]; then
+        echo -e "  ${GREEN}Sample check passed - no deleted items found${NC}"
+    else
+        echo -e "  ${YELLOW}Found $deleted_count potentially deleted items in sample${NC}"
+    fi
+    
+    echo ""
+    
+    # Check for items that may have been updated
+    echo -e "${CYAN}Checking for updated Workshop items (sample of 10)...${NC}"
+    local updated_count=0
+    
+    local archived_sample=$(sqlite3 "$DB_FILE" "SELECT PublishedFileId FROM WorkshopItems WHERE ArchivedAt IS NOT NULL ORDER BY ArchivedAt DESC LIMIT 10;")
+    
+    for id in $archived_sample; do
+        local db_time=$(sqlite3 "$DB_FILE" "SELECT ArchivedTimeUpdated FROM WorkshopItems WHERE PublishedFileId = $id;")
+        
+        # Query Steam API
+        local response=$(curl -s "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/" \
+            -d "itemcount=1" -d "publishedfileids[0]=$id" 2>/dev/null)
+        
+        local steam_time=$(echo "$response" | grep -o '"time_updated":[0-9]*' | grep -o '[0-9]*')
+        
+        if [ -n "$steam_time" ] && [ -n "$db_time" ] && [ "$steam_time" -gt "$db_time" ]; then
+            local title=$(sqlite3 "$DB_FILE" "SELECT Title FROM WorkshopItems WHERE PublishedFileId = $id;")
+            echo -e "  ${YELLOW}Updated since archive:${NC} $id ($title)"
+            updated_count=$((updated_count + 1))
+        fi
+        
+        sleep 0.5  # Rate limit
+    done
+    
+    if [ "$updated_count" -eq 0 ]; then
+        echo -e "  ${GREEN}No updates detected in sample${NC}"
+    else
+        echo -e "  ${YELLOW}Found $updated_count items updated on Workshop since archived${NC}"
+        echo ""
+        if confirm "Would you like to re-queue updated items for re-archive?"; then
+            for id in $archived_sample; do
+                local db_time=$(sqlite3 "$DB_FILE" "SELECT ArchivedTimeUpdated FROM WorkshopItems WHERE PublishedFileId = $id;")
+                local response=$(curl -s "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/" \
+                    -d "itemcount=1" -d "publishedfileids[0]=$id" 2>/dev/null)
+                local steam_time=$(echo "$response" | grep -o '"time_updated":[0-9]*' | grep -o '[0-9]*')
+                
+                if [ -n "$steam_time" ] && [ -n "$db_time" ] && [ "$steam_time" -gt "$db_time" ]; then
+                    sqlite3 "$DB_FILE" "UPDATE WorkshopItems SET ArchivedAt = NULL, ArchivedTimeUpdated = NULL WHERE PublishedFileId = $id;"
+                    echo -e "  Re-queued: $id"
+                fi
+                sleep 0.3
+            done
+            echo -e "${GREEN}Items re-queued. Restart service to process them.${NC}"
+        fi
+    fi
+    
+    echo ""
+    echo -e "${CYAN}Summary:${NC}"
+    echo -e "  Database items: $db_total"
+    echo -e "  Archived: $db_archived"
+    echo -e "  Pending: $db_pending"
+    echo -e "  Sample deleted check: $deleted_count issues"
+    echo -e "  Sample update check: $updated_count updates"
+}
+
+force_retry_failed() {
+    if [ ! -f "$DB_FILE" ]; then
+        echo -e "${YELLOW}No database found.${NC}"
+        return
+    fi
+    
+    local count=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM FailedDownloads;" 2>/dev/null || echo "0")
+    
+    if [ "$count" -eq 0 ]; then
+        echo -e "${YELLOW}No failed downloads to retry.${NC}"
+        return
+    fi
+    
+    echo -e "${CYAN}Found $count failed items${NC}"
+    echo ""
+    
+    # Show failed items
+    sqlite3 -header -column "$DB_FILE" \
+        "SELECT PublishedFileId as ID, Attempts, substr(LastError, 1, 30) as Error
+         FROM FailedDownloads ORDER BY LastAttempt DESC LIMIT 10;"
+    echo ""
+    
+    if ! confirm "Reset attempt counters and timestamps to force immediate retry?"; then
+        echo "Cancelled."
+        return
+    fi
+    
+    # Reset LastAttempt to epoch and reduce attempts
+    sqlite3 "$DB_FILE" "UPDATE FailedDownloads SET LastAttempt = 0, Attempts = CASE WHEN Attempts > 1 THEN 1 ELSE Attempts END;"
+    
+    echo -e "${GREEN}Failed items reset for immediate retry.${NC}"
+    echo -e "Restart the service to begin retry process."
+    
+    if confirm "Restart service now?"; then
+        restart_service
+    fi
+}
+
+requeue_archived_items() {
+    if [ ! -f "$DB_FILE" ]; then
+        echo -e "${YELLOW}No database found.${NC}"
+        return
+    fi
+    
+    local count=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM WorkshopItems WHERE ArchivedAt IS NOT NULL;" 2>/dev/null || echo "0")
+    
+    if [ "$count" -eq 0 ]; then
+        echo -e "${YELLOW}No archived items found.${NC}"
+        return
+    fi
+    
+    echo -e "${RED}WARNING: This will mark ALL $count archived items for re-upload!${NC}"
+    echo -e "This is useful if you wiped the GitHub repo and need to re-upload everything."
+    echo ""
+    
+    if ! confirm "Are you sure you want to re-queue ALL $count items?"; then
+        echo "Cancelled."
+        return
+    fi
+    
+    if ! confirm "This will take a long time to re-upload. Proceed?"; then
+        echo "Cancelled."
+        return
+    fi
+    
+    sqlite3 "$DB_FILE" "UPDATE WorkshopItems SET ArchivedAt = NULL, ArchivedTimeUpdated = NULL;"
+    sqlite3 "$DB_FILE" "DELETE FROM FailedDownloads;"
+    
+    echo -e "${GREEN}All $count items re-queued for upload.${NC}"
+    echo -e "Restart the service to begin processing."
+    
+    if confirm "Restart service now?"; then
+        restart_service
+    fi
+}
+
 clear_failed_downloads() {
     if [ ! -f "$DB_FILE" ]; then
         echo -e "${YELLOW}No database found.${NC}"
@@ -412,7 +716,7 @@ full_reset() {
     
     # Recreate directories
     mkdir -p "$DATA_DIR/downloads"
-    chown -R workshop-archiver:workshop "$DATA_DIR"
+    chown -R workshop-archiver:workshop "$DATA_DIR" 2>/dev/null || true
     
     echo -e "${GREEN}Full reset complete!${NC}"
     
@@ -448,7 +752,7 @@ update_binary() {
             echo -e "${YELLOW}Copying new binary...${NC}"
             cp "$binary_path" "$OPT_DIR/GitHubArchiver.Daemon"
             chmod +x "$OPT_DIR/GitHubArchiver.Daemon"
-            chown workshop-archiver:workshop "$OPT_DIR/GitHubArchiver.Daemon"
+            chown workshop-archiver:workshop "$OPT_DIR/GitHubArchiver.Daemon" 2>/dev/null || true
             
             echo -e "${GREEN}Binary updated!${NC}"
             
@@ -469,7 +773,7 @@ update_binary() {
             echo -e "${YELLOW}Downloading new binary...${NC}"
             scp "$scp_source" "$OPT_DIR/GitHubArchiver.Daemon"
             chmod +x "$OPT_DIR/GitHubArchiver.Daemon"
-            chown workshop-archiver:workshop "$OPT_DIR/GitHubArchiver.Daemon"
+            chown workshop-archiver:workshop "$OPT_DIR/GitHubArchiver.Daemon" 2>/dev/null || true
             
             echo -e "${GREEN}Binary updated!${NC}"
             
@@ -511,6 +815,7 @@ backup_database() {
     echo -e "Size: $(du -h "$backup_file" | cut -f1)"
 }
 
+
 # Main loop
 main() {
     # Check if running as root
@@ -543,13 +848,17 @@ main() {
             12) show_failed_downloads ;;
             13) search_items ;;
             14) export_manifest ;;
-            15) clear_failed_downloads ;;
-            16) clear_depot_cache ;;
-            17) clear_temp_files ;;
-            18) full_reset ;;
-            19) update_binary ;;
-            20) edit_config ;;
-            21) backup_database ;;
+            15) verify_github_releases ;;
+            16) verify_against_steam ;;
+            17) force_retry_failed ;;
+            18) requeue_archived_items ;;
+            19) clear_failed_downloads ;;
+            20) clear_depot_cache ;;
+            21) clear_temp_files ;;
+            22) full_reset ;;
+            23) update_binary ;;
+            24) edit_config ;;
+            25) backup_database ;;
             r|R) continue ;;
             0) echo "Goodbye!"; exit 0 ;;
             *) echo -e "${RED}Invalid option${NC}" ;;

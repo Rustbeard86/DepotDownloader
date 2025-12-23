@@ -9,6 +9,8 @@ namespace GitHubArchiver.Daemon;
 /// </summary>
 public sealed class GitHubArchiverWorker : BackgroundService
 {
+    private const int MaxConsecutiveFailures = 5;
+    
     private readonly IGitHubArchiveService _archiveService;
     private readonly WorkshopDownloadService _downloadService;
     private readonly IHostApplicationLifetime _lifetime;
@@ -17,7 +19,7 @@ public sealed class GitHubArchiverWorker : BackgroundService
     private readonly IWorkshopTracker _tracker;
 
     private uint _currentAppId;
-    private bool _isProcessingItem;
+    private int _consecutiveFailures;
 
     public GitHubArchiverWorker(
         IOptionsMonitor<WorkshopOptions> optionsMonitor,
@@ -127,6 +129,9 @@ public sealed class GitHubArchiverWorker : BackgroundService
         _logger.LogInformation("Starting {Type} archive pass for AppId {AppId}", isInitial ? "initial" : "update",
             _currentAppId);
 
+        // Reset failure counter at start of each pass
+        _consecutiveFailures = 0;
+
         try
         {
             // Query all workshop items
@@ -206,24 +211,46 @@ public sealed class GitHubArchiverWorker : BackgroundService
                     break;
                 }
 
-                _isProcessingItem = true;
                 try
                 {
-                    var success = await _downloadService.DownloadAndArchiveItemAsync(item, ct);
+                    var result = await _downloadService.DownloadAndArchiveItemAsync(item, ct);
 
-                    if (success)
+                    if (result == ArchiveResult.Success)
+                    {
                         successCount++;
+                        _consecutiveFailures = 0; // Reset on success
+                    }
                     else
+                    {
                         failCount++;
+                        _consecutiveFailures++;
+                        
+                        var failureType = result switch
+                        {
+                            ArchiveResult.AuthenticationFailure => "Authentication",
+                            ArchiveResult.TransientFailure => "Transient",
+                            ArchiveResult.ConfigurationError => "Configuration",
+                            ArchiveResult.ContentError => "Content",
+                            _ => "Unknown"
+                        };
+                        
+                        _logger.LogWarning("GitHub {FailureType} failure for {Id} ({Count}/{Max} consecutive failures)", 
+                            failureType, item.PublishedFileId, _consecutiveFailures, MaxConsecutiveFailures);
+                        
+                        if (_consecutiveFailures >= MaxConsecutiveFailures)
+                        {
+                            _logger.LogCritical(
+                                "Failed {Count} times consecutively. Stopping archive pass to prevent wasting bandwidth. " +
+                                "Check GitHub token, rate limits, or network connectivity. Failures recorded in database for retry later.",
+                                _consecutiveFailures);
+                            break;
+                        }
+                    }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
                     _logger.LogWarning("Item {Id} was interrupted by shutdown", item.PublishedFileId);
                     break;
-                }
-                finally
-                {
-                    _isProcessingItem = false;
                 }
 
                 // Rate limit between items
@@ -271,6 +298,9 @@ public sealed class GitHubArchiverWorker : BackgroundService
         var delay = TimeSpan.FromSeconds(options.DelayBetweenDownloadsSeconds);
         var successCount = 0;
 
+        // Reset failure counter for retry pass
+        _consecutiveFailures = 0;
+
         foreach (var failure in failures)
         {
             if (ct.IsCancellationRequested)
@@ -287,21 +317,31 @@ public sealed class GitHubArchiverWorker : BackgroundService
             _logger.LogInformation("Retry attempt {Attempt} for {Id} ({Title})",
                 failure.Attempts + 1, item.PublishedFileId, item.Title);
 
-            _isProcessingItem = true;
             try
             {
-                var success = await _downloadService.DownloadAndArchiveItemAsync(item, ct);
-                if (success)
+                var result = await _downloadService.DownloadAndArchiveItemAsync(item, ct);
+                
+                if (result == ArchiveResult.Success)
+                {
                     successCount++;
+                    _consecutiveFailures = 0;
+                }
+                else
+                {
+                    _consecutiveFailures++;
+                    if (_consecutiveFailures >= MaxConsecutiveFailures)
+                    {
+                        _logger.LogCritical(
+                            "Retry pass failed {Count} times consecutively. Stopping to prevent wasting bandwidth.",
+                            _consecutiveFailures);
+                        break;
+                    }
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 _logger.LogWarning("Retry for {Id} was interrupted by shutdown", item.PublishedFileId);
                 break;
-            }
-            finally
-            {
-                _isProcessingItem = false;
             }
 
             if (!ct.IsCancellationRequested)
