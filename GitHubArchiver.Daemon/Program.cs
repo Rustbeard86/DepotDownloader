@@ -52,6 +52,12 @@ try
     else
         builder.Services.AddSystemd();
 
+    // Configure the host to ignore exceptions in background services so the daemon keeps running
+    builder.Services.Configure<HostOptions>(hostOptions =>
+    {
+        hostOptions.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+    });
+
     builder.Services.Configure<WorkshopOptions>(builder.Configuration.GetSection(WorkshopOptions.SectionName));
     builder.Services.Configure<SteamOptions>(builder.Configuration.GetSection(SteamOptions.SectionName));
     builder.Services.Configure<GitHubOptions>(builder.Configuration.GetSection(GitHubOptions.SectionName));

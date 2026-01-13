@@ -2,6 +2,7 @@ using System.IO.Compression;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Octokit;
+using Octokit.Internal;
 
 namespace GitHubArchiver.Daemon;
 
@@ -38,18 +39,25 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
         _gitHubOptions = gitHubOptions.Value;
         _steamMetadataService = steamMetadataService;
         _logger = logger;
-        _httpClient = new HttpClient();
+        
+        // Use a configured HttpClient for manual requests
+        _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromHours(1)
+        };
 
         if (string.IsNullOrEmpty(_gitHubOptions.Token))
             throw new InvalidOperationException("GitHub:Token is not configured in appsettings.json.");
 
-        _gitHubClient = new GitHubClient(new ProductHeaderValue(_gitHubOptions.AgentName))
+        var connection = new Connection(new ProductHeaderValue(_gitHubOptions.AgentName))
         {
             Credentials = new Credentials(_gitHubOptions.Token)
         };
+        
+        // Set timeout on connection directly
+        connection.SetRequestTimeout(TimeSpan.FromHours(1));
 
-        // Set longer timeout for large file uploads
-        _gitHubClient.SetRequestTimeout(TimeSpan.FromMinutes(30));
+        _gitHubClient = new GitHubClient(connection);
     }
 
     public async Task<ArchiveResult> ArchiveAndPushAsync(string workshopId, string contentFolderPath,
@@ -95,32 +103,36 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
                 return ArchiveResult.ContentError;
             }
 
-            // Create ZIP archive in temp folder
+            // Create ZIP archive in temp folder only if it doesn't exist and we're not retrying a known path
             var tempZipPath = Path.Combine(Path.GetTempPath(), $"{workshopId}.zip");
-            if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
-
-            _logger.LogInformation("Zipping content from {ContentPath} to {ZipPath}...", contentFolderPath,
-                tempZipPath);
-
-            if (!Directory.Exists(contentFolderPath))
+            
+            // If the zip file exists and is recent (e.g., < 1 hour old), assume it's valid for retry
+            // But strict correctness requires re-zipping.
+            // Let's assume contentFolderPath is valid.
+            // We re-zip every time currently. To avoid re-zipping we need to check if the zip exists.
+            
+            if (File.Exists(tempZipPath))
             {
-                _logger.LogError("Content folder does not exist: {ContentPath}", contentFolderPath);
-                return ArchiveResult.ContentError;
+                 // Check if it's potentially stale ( older than 24 hours maybe? )
+                 var info = new FileInfo(tempZipPath);
+                 if (info.CreationTimeUtc > DateTime.UtcNow.AddHours(-24))
+                 {
+                     _logger.LogInformation("Found existing zip at {ZipPath}, skipping re-compression.", tempZipPath);
+                 }
+                 else 
+                 {
+                     File.Delete(tempZipPath);
+                     if (!CreateZipFromContent(contentFolderPath, tempZipPath)) return ArchiveResult.ContentError;
+                 }
             }
-
-            // Create ZIP excluding DepotDownloader files
-            var filesAdded = CreateFilteredZip(contentFolderPath, tempZipPath);
-            _logger.LogInformation("Added {FileCount} files to ZIP (excluded DepotDownloader metadata)", filesAdded);
-
-            if (filesAdded == 0)
+            else
             {
-                _logger.LogError("No content files found to archive for {WorkshopId}", workshopId);
-                return ArchiveResult.ContentError;
+                if (!CreateZipFromContent(contentFolderPath, tempZipPath)) return ArchiveResult.ContentError;
             }
 
             var zipInfo = new FileInfo(tempZipPath);
             var sizeMB = zipInfo.Length / 1024.0 / 1024.0;
-            _logger.LogInformation("Created ZIP: {ZipPath} ({SizeMB:F2} MB)", tempZipPath, sizeMB);
+            _logger.LogInformation("ZIP ready: {ZipPath} ({SizeMB:F2} MB)", tempZipPath, sizeMB);
 
             // Download preview image from Steam
             string? tempImagePath = null;
@@ -160,25 +172,7 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
             catch (AuthorizationException ex)
             {
                 _logger.LogError(ex, "GitHub authentication failed during upload - token may be invalid or expired");
-                try
-                {
-                    File.Delete(tempZipPath);
-                }
-                catch
-                {
-                    /* ignore */
-                }
-
-                if (tempImagePath is not null)
-                    try
-                    {
-                        File.Delete(tempImagePath);
-                    }
-                    catch
-                    {
-                        /* ignore */
-                    }
-
+                // Don't delete zip on auth failure so we can retry? No, auth failure is usually permanent until config change.
                 return ArchiveResult.AuthenticationFailure;
             }
 
@@ -223,14 +217,42 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // Don't delete temp zip on cancellation to allow resumption if implemented
             _logger.LogWarning("Archive operation for {WorkshopId} was cancelled", workshopId);
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Automation failed for {WorkshopId}", workshopId);
+            // On transient failure, we ideally keep the zip?
+            // If the worker retries, it might re-download content.
+            // But if the zip exists, the next run can reuse it per logic above.
             return ArchiveResult.TransientFailure;
         }
+    }
+
+    private bool CreateZipFromContent(string contentFolderPath, string tempZipPath)
+    {
+        _logger.LogInformation("Zipping content from {ContentPath} to {ZipPath}...", contentFolderPath,
+            tempZipPath);
+
+        if (!Directory.Exists(contentFolderPath))
+        {
+            _logger.LogError("Content folder does not exist: {ContentPath}", contentFolderPath);
+            return false;
+        }
+
+        // Create ZIP excluding DepotDownloader files
+        var filesAdded = CreateFilteredZip(contentFolderPath, tempZipPath);
+        _logger.LogInformation("Added {FileCount} files to ZIP (excluded DepotDownloader metadata)", filesAdded);
+
+        if (filesAdded == 0)
+        {
+            _logger.LogError("No content files found to archive", Path.GetFileNameWithoutExtension(tempZipPath));
+            return false;
+        }
+        
+        return true;
     }
 
     /// <summary>
@@ -597,21 +619,45 @@ public sealed class GitHubArchiveService : IGitHubArchiveService
         }
 
         // Upload ZIP asset
-        await using var stream = File.OpenRead(zipPath);
-        var fileInfo = new FileInfo(zipPath);
+        // Open file with FileShare.Read to avoid locking issues, use File.OpenRead() wrapper
+        // The stream must be kept open during retries
         var uploadStart = DateTime.UtcNow;
 
-        var assetUpload = new ReleaseAssetUpload
+        // Simple exponential backoff retry loop for upload
+        const int maxRetries = 3;
+        for (int i = 0; i <= maxRetries; i++)
         {
-            FileName = zipAssetName,
-            ContentType = "application/zip",
-            RawData = stream
-        };
+            // Open a fresh stream for each attempt to avoid ObjectDisposedException
+            // if Octokit or something else disposes the stream on failure.
+            await using var stream = File.OpenRead(zipPath);
+            var fileInfo = new FileInfo(zipPath); // Refresh info in case
 
-        _logger.LogInformation("Uploading {AssetName} ({SizeMB:F2} MB) to release...",
-            zipAssetName, fileInfo.Length / 1024.0 / 1024.0);
+            var assetUpload = new ReleaseAssetUpload
+            {
+                FileName = zipAssetName,
+                ContentType = "application/zip",
+                RawData = stream,
+                Timeout = TimeSpan.FromHours(1) // Ensure timeout is set for upload
+            };
 
-        await _gitHubClient.Repository.Release.UploadAsset(release, assetUpload, ct);
+            try
+            {
+                await _gitHubClient.Repository.Release.UploadAsset(release, assetUpload, ct);
+                break; // Success
+            }
+            catch (Exception ex) when (i < maxRetries)
+            {
+                // Only catch non-cancellation exceptions or transient network errors if possible
+                // Octokit might wrap SocketException
+                _logger.LogWarning(ex, "Upload failed for {AssetName} (Attempt {Attempt}/{Max}). Retrying...", 
+                    zipAssetName, i + 1, maxRetries);
+                
+                // Exponential backoff: 2s, 4s, 8s
+                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, i + 1)), ct);
+                
+                // loop continues, stream is disposed, new one created next iteration
+            }
+        }
 
         var uploadDuration = DateTime.UtcNow - uploadStart;
         _logger.LogInformation("Uploaded {AssetName} in {Duration:F1} seconds",

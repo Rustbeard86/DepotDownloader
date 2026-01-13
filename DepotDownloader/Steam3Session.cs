@@ -391,13 +391,36 @@ internal class Steam3Session
             cache_max_age_seconds = 0
         };
 
-        var response = await _steamPublishedFile.QueryFiles(request);
+        // Create a timeout token that cancels after 10 minutes
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        // Link with the session's aborted token so either can cancel
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, _abortedToken.Token);
 
-        if (response.Result != EResult.OK)
-            throw new Exception(
-                $"EResult {(int)response.Result} ({response.Result}) while querying workshop files for app {appId}.");
+        try
+        {
+            // SteamKit2 doesn't support CancellationToken in QueryFiles directly.
+            // Using WaitAsync(CancellationToken) on the Task to enforce the timeout.
+            var response = await _steamPublishedFile.QueryFiles(request).ToTask().WaitAsync(linkedCts.Token);
 
-        return response.Body;
+            if (response.Result != EResult.OK)
+                throw new Exception(
+                    $"EResult {(int)response.Result} ({response.Result}) while querying workshop files for app {appId}.");
+
+            return response.Body;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("QueryWorkshopFiles timed out or was cancelled for app {AppId}", appId);
+            // Return empty response so the service can continue to the next task/retry later logic
+            // without crashing the worker loop.
+            return new CPublishedFile_QueryFiles_Response();
+        }
+        catch (Exception ex)
+        {
+            // Catch SteamKit2 generic exceptions (like AsyncJobFailedException)
+            _logger.LogError(ex, "Failed to query workshop files for app {AppId}", appId);
+            return new CPublishedFile_QueryFiles_Response();
+        }
     }
 
     private void ResetConnectionFlags()
